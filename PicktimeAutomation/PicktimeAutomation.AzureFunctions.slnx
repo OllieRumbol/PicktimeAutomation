@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="PicktimeAutomation.AzureFunctions/PicktimeAutomation.AzureFunctions.csproj" />
+  <Project Path="PicktimeAutomation.AzureFunctionsTests/PicktimeAutomation.AzureFunctionsTests.csproj" Id="cf0d9823-b65e-4723-921e-95d0e5960f77" />
+  <Project Path="PicktimeAutomation.Models/PicktimeAutomation.Models.csproj" Id="b37a279b-19f0-45a1-9bdd-62d1486727ae" />
+  <Project Path="PicktimeAutomation.Services/PicktimeAutomation.Services.csproj" />
+  <Project Path="PicktimeAutomation.ServicesTests/PicktimeAutomation.ServicesTests.csproj" />
+</Solution>
