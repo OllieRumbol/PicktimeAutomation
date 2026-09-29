@@ -1,13 +1,11 @@
 # Picktime Automation — Specification
 
-> **What this document is for:** It answers *what are we building, and why?* It is the source of truth for requirements. The technical design is in [plan.md](plan.md).
+> **What this document is for:** It answers *what are we building, and why?* It is the source of truth for requirements.
 
 Status: agreed scope, ready to implement
 Last updated: 2026-09-29
-Plan: [plan.md](plan.md)
-Tasks: [tasks.md](tasks.md)
 
-This document is the record of requirements for this project. It says what must be true, not how it is achieved. Each fact is stated once: the plan refers to sections here rather than repeating them. Section references such as "plan section 4.1" point to plan.md. Keep it updated as requirements change.
+This document is the record of requirements for this project. It says what must be true, not how it is achieved. Each fact is stated once: the plan refers to sections here rather than repeating them. Keep it updated as requirements change.
 
 ---
 
@@ -88,7 +86,7 @@ The repository contains a working skeleton. It compiles and has the right shape.
    `.github/` exists but is empty.
 
 9. **Application Insights sampling is enabled.**
-   `PicktimeAutomation.AzureFunctions/host.json` sets `samplingSettings.isEnabled` to `true`. Sampling can discard the one log line that explains a failed run. See plan section 5.2.
+   `PicktimeAutomation.AzureFunctions/host.json` sets `samplingSettings.isEnabled` to `true`. Sampling can discard the one log line that explains a failed run.
 
 ---
 
@@ -267,7 +265,7 @@ Two independent things must both use London time:
 1. **The trigger time.** The run starts at 00:05 London time, in both GMT and BST.
 2. **The booking date.** The date is computed from the current London time, not from the host clock, which is UTC.
 
-Fixing only one of the two gives a booking that is a day out. Both must be in place, and both must be covered by tests. Plan section 3.3 describes how.
+Fixing only one of the two gives a booking that is a day out. Both must be in place, and both must be covered by tests.
 
 Every run must log the current UTC time, the current London time and the computed booking date, so a mistake is visible in the first log line.
 
@@ -320,9 +318,6 @@ Notes:
 * The target list is configuration. Adding the other six target ids later extends the fallback chain with no code change.
 
 **If an availability read fails**, treat that target as having no free hours, log a warning naming the target, and carry on. One unreachable target must not stop the other from being used. If every availability read fails, every hour records `NoAvailability` and the run summary says so.
-
-The order in which calls are made is design. See plan section 3.4.
-
 ### 6.5 Outcome per hour
 
 Each hour ends in exactly one of these states, and each is logged:
@@ -354,7 +349,7 @@ An HTTP-triggered function exists alongside the timer, for testing and for catch
 | Season gate | Applies, exactly as the timer does |
 | Response | The run summary as JSON, so the outcome is visible without opening the logs |
 
-It uses the same code path as the timer, so manual and scheduled runs cannot behave differently. See plan section 3.
+It uses the same code path as the timer, so manual and scheduled runs cannot behave differently.
 
 ---
 
@@ -370,11 +365,11 @@ The successful Postman booking carried 25 headers. It is not known which are req
 2. Remove `browserid`. Re-send.
 3. Remove `x-requested-with` and `referer`. Re-send.
 
-Stop at the first step that fails, and keep whatever the last successful attempt sent. The goal is to send as little as possible, because every extra header is one more thing that can change under us. Record the answer in plan section 2 as configuration if `browserid` turns out to be needed.
+Stop at the first step that fails, and keep whatever the last successful attempt sent. The goal is to send as little as possible, because every extra header is one more thing that can change under us. Record the answer in section 5.4.
 
 ### 7.2 What a rejection looks like
 
-No rejected booking has been captured. Get one by posting a booking for a slot that is already taken — the 17:00 slot on target 2b for 29 September 2026 is now taken, so it can serve as the test case. Record the exact `status`, `message` and HTTP status code, then make the error handling in plan section 4 match.
+No rejected booking has been captured. Get one by posting a booking for a slot that is already taken — the 17:00 slot on target 2b for 29 September 2026 is now taken, so it can serve as the test case. Record the exact `status`, `message` and HTTP status code in section 5.2.
 
 ---
 
@@ -403,7 +398,7 @@ One observation on timing: to book Thursday 1 October 2026, the run had to happe
 * Runs outside the season do nothing, and say so in the logs.
 * No secret or personal detail is in the repository.
 * The automation cannot create a duplicate booking, even when a booking request times out.
-* Every test in plan section 7 passes.
+* All tests pass.
 * Deployment is automated, and a failing test stops a deployment.
 * One real booking has been confirmed on the Picktime site from a run in Azure, and its confirmation email arrived.
 * No log line from a run is ever discarded.
