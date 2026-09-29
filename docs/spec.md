@@ -7,7 +7,7 @@ Last updated: 2026-09-29
 Plan: [plan.md](plan.md)
 Tasks: [tasks.md](tasks.md)
 
-This document is the record of requirements for this project. Section references such as "plan section 4.1" point to plan.md. Keep it updated as requirements change.
+This document is the record of requirements for this project. It says what must be true, not how it is achieved. Each fact is stated once: the plan refers to sections here rather than repeating them. Section references such as "plan section 4.1" point to plan.md. Keep it updated as requirements change.
 
 ---
 
@@ -88,7 +88,7 @@ The repository contains a working skeleton. It compiles and has the right shape.
    `.github/` exists but is empty.
 
 9. **Application Insights sampling is enabled.**
-   `PicktimeAutomation.AzureFunctions/host.json` sets `samplingSettings.isEnabled` to `true`. Sampling discards telemetry to control volume, which is the opposite of what is wanted at three runs a week — it can drop the one log line that explains a failed run. See plan section 5.2.
+   `PicktimeAutomation.AzureFunctions/host.json` sets `samplingSettings.isEnabled` to `true`. Sampling can discard the one log line that explains a failed run. See plan section 5.2.
 
 ---
 
@@ -187,7 +187,7 @@ Body, as captured from a **verified successful booking**:
 Notes on the fields:
 
 * The current code sends only the first twelve. The remaining fields come from the club's booking form. Send the payload exactly as captured, since a booking is known to succeed with it and the cost of sending the extra fields is nothing.
-* `alt_number_Ext` has that unusual capitalisation in the real payload. Keep it. A JSON property name attribute is needed, because it will not match a C# property name by convention.
+* `alt_number_Ext` has that unusual capitalisation in the real payload. Keep it exactly.
 * `birth_month_date` holds the literal string `month-selectDate`, which is the unset state of a form control. It is not a date. Send it verbatim.
 * `booking_addnl_fields` is a JSON **string** containing nested JSON, not an object. `ADDITIONAL ARCHER` is a custom field the club has added to its form.
 
@@ -210,8 +210,6 @@ Successful response:
 
 * `status: true` and `message: "Appointment fixed"` indicate success. Treat `status` as the authority and log the message.
 * `data.id` is the booking id. Log it, so a booking can be traced back to a run.
-* `PicktimeAutomation.Models/BookingSuccessfulResponse.cs` already models this response correctly.
-
 A failure has `status: false` with an explanatory `message`.
 
 ### 5.3 Authentication
@@ -222,10 +220,10 @@ A `scantoken` header carries a JSON Web Token. Verified properties:
 * `userId` is `null`, so it is an anonymous token issued to any visitor of the public booking page.
 * **Reuse is proven.** A token issued on 25 March 2026 was used on 28 September 2026 to create a real booking, which returned `200 OK` and `status: true`. The token is therefore long-lived across at least six months, and is not tied to a browser session.
 
-Consequences for the design:
+Requirements that follow:
 
-1. Store the token as configuration, not source, so it can be replaced without a code change.
-2. If the API starts rejecting the token, log an error that clearly names authentication as the cause. Silence is the failure mode to avoid.
+1. The token can be replaced without a code change.
+2. If the API rejects the token, the run reports authentication as the cause. Silence is the failure mode to avoid.
 
 ### 5.4 Headers
 
@@ -321,7 +319,7 @@ Notes:
 * Availability is read before any booking is made. A slot that Picktime reports as free can still be taken by another archer in the seconds between the read and the write, so a booking failure is expected behaviour and must fall through to the next target rather than abort the run.
 * The target list is configuration. Adding the other six target ids later extends the fallback chain with no code change.
 
-**If an availability read fails** after its retries, treat that target as having no free hours, log a warning naming the target, and carry on. One unreachable target must not stop the other from being used. If every availability read fails, every hour records `NoAvailability` and the run summary says so.
+**If an availability read fails**, treat that target as having no free hours, log a warning naming the target, and carry on. One unreachable target must not stop the other from being used. If every availability read fails, every hour records `NoAvailability` and the run summary says so.
 
 The order in which calls are made is design. See plan section 3.4.
 
@@ -334,6 +332,8 @@ Each hour ends in exactly one of these states, and each is logged:
 | `Booked` | A target was booked. The target name and booking id are logged. |
 | `NoAvailability` | No target in the chain had that hour free. |
 | `Failed` | A target was free but every booking attempt was rejected. |
+
+Each hour is independent. A failure on one hour, of any kind, must never stop the other hours from being attempted.
 
 A run is a success only when all three hours reach `Booked`. Partial success is reported as partial, not as failure.
 
@@ -348,7 +348,7 @@ An HTTP-triggered function exists alongside the timer, for testing and for catch
 | Item | Value |
 | --- | --- |
 | Method and route | `POST /api/book` |
-| Authorisation | Function key, so the URL alone is not enough |
+| Authorisation | Protected, so the URL alone is not enough to fire a booking |
 | Body or query | Optional `bookingDate` as `yyyy-MM-dd` |
 | Default | When no date is given, use the same rule as the timer: London today plus 7 days |
 | Season gate | Applies, exactly as the timer does |
@@ -384,7 +384,7 @@ Recorded so they can be corrected rather than discovered later.
 
 1. There is no club limit on how many slots one archer may hold. The automation will attempt 9 bookings per week.
 2. Indoor booking is free, so `cost` stays `0` and `payment_required` stays `false`.
-3. Bookings are for one archer only. Confirmed: no additional archers, ever. `booking_addnl_fields` is therefore a fixed constant, `{"ADDITIONAL ARCHER":""}`, sent exactly as the verified booking sent it. It needs no configuration setting, because it never varies.
+3. Bookings are for one archer only. Confirmed: no additional archers, ever. `booking_addnl_fields` is therefore a fixed constant, `{"ADDITIONAL ARCHER":""}`, sent exactly as the verified booking sent it. It never varies.
 4. Cancellation is out of scope. Unwanted bookings are cancelled by hand.
 5. The season is a fixed 1 October to 31 March, the same every year.
 6. Slots are always exactly one hour, and 17:00 to 20:00 is always within the hall's opening hours.
@@ -401,12 +401,12 @@ One observation on timing: to book Thursday 1 October 2026, the run had to happe
 * A scheduled run on Tuesday, Thursday and Friday at 00:05 London books 17:00, 18:00 and 19:00 seven days ahead.
 * Target 2b is preferred and 3a is used per hour when 2b is taken.
 * Runs outside the season do nothing, and say so in the logs.
-* No secret or personal detail is in source, and both `.gitignore` files are committed.
-* A booking `POST` is never automatically resent, so the automation cannot create a duplicate booking.
-* All tests pass, including the BST and GMT time zone cases and the ambiguous-outcome cases.
-* The GitHub Actions workflow builds, tests and deploys, with tests gating deployment.
+* No secret or personal detail is in the repository.
+* The automation cannot create a duplicate booking, even when a booking request times out.
+* Every test in plan section 7 passes.
+* Deployment is automated, and a failing test stops a deployment.
 * One real booking has been confirmed on the Picktime site from a run in Azure, and its confirmation email arrived.
-* Application Insights sampling is off, so no log line from a run is ever discarded.
-* The season-at-a-glance query is pinned to an Azure dashboard.
+* No log line from a run is ever discarded.
+* Every run of the season can be reviewed in one place.
 * The logs make it clear, without reading the code, what any given run did.
 * `README.md` explains what the project does, how to run it locally, and which settings it needs.
