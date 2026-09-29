@@ -1,7 +1,8 @@
-# Picktime Automation — Specification and Delivery Plan
+# Picktime Automation — Specification
 
 Status: agreed scope, ready to implement
-Last updated: 2026-09-28
+Last updated: 2026-09-29
+Tasks: [tasks.md](tasks.md)
 
 This document is the record of design decisions for this project. It is kept as one specification rather than split into separate decision records, because the design is small and coherent enough to read in one sitting. Keep it updated as decisions change.
 
@@ -742,7 +743,7 @@ Plus every setting in section 7.
 
 Note that `GMT Standard Time` is the Windows id for **UK time including British Summer Time**, despite the name. It is not fixed to GMT.
 
-The code is unaffected by this choice. It uses the IANA id `Europe/London` via `TimeZoneInfo`, which .NET resolves on both platforms. Step 30 of the delivery plan still verifies the next-run time in the logs.
+The code is unaffected by this choice. It uses the IANA id `Europe/London` via `TimeZoneInfo`, which .NET resolves on both platforms. Task T18 in [tasks.md](tasks.md) still verifies the next-run time in the logs.
 
 ### 13.2 Local prerequisites
 
@@ -751,10 +752,10 @@ Checked on this machine:
 | Tool | Status | Needed for |
 | --- | --- | --- |
 | .NET 10 SDK | Installed, 10.0.401 | Phase 1 onwards |
-| Azure Functions Core Tools v4 | **Not installed** | Running the Function locally, phase 3 |
-| Azure CLI | **Not installed** | Creating the Azure resources, phase 6. The portal is an alternative. |
+| Azure Functions Core Tools v4 | **Not installed** | Running the Function locally, from task T2 |
+| Azure CLI | **Not installed** | Creating the Azure resources, phase 5. The portal is an alternative. |
 
-Core Tools must be installed before phase 3. Neither missing tool blocks phases 1 or 2.
+Core Tools must be installed before task T2, which checks that the Function App still starts after the .NET upgrade. Azure CLI blocks nothing.
 
 ### 13.3 Cost
 
@@ -808,7 +809,7 @@ Recorded so they can be corrected rather than discovered later.
 5. The season is a fixed 1 October to 31 March, the same every year.
 6. Slots are always exactly one hour, and 17:00 to 20:00 is always within the hall's opening hours.
 7. The `scantoken` remains valid for the whole season. Reuse is proven over six months, so this is now evidenced rather than assumed. If it ever stops working, the fix is to capture a new one and update one application setting.
-8. An Azure subscription is available, and the resource group and Function App name will be settled during phase 6.
+8. An Azure subscription is available, and the resource group and Function App name will be settled during phase 5.
 9. The 7-day window is a release rule, not an API restriction. The verified booking was made 1 day ahead, so the endpoint accepts any date whose slots have been released. The automation still uses 7 days, because that is when the slots appear.
 
 One observation on timing: to book Thursday 1 October 2026, the run had to happen on Thursday 24 September, which has passed. The first booking this automation can take is Tuesday 6 October 2026, from the run on Tuesday 29 September.
@@ -817,63 +818,9 @@ One observation on timing: to book Thursday 1 October 2026, the run had to happe
 
 ## 16. Delivery plan
 
-### Phase 1 — Foundations
+The delivery plan is in [tasks.md](tasks.md). It holds the order of work and its progress.
 
-1. Upgrade all five projects from .NET 6 to .NET 10, and update the Functions worker packages to their current major version.
-2. Confirm the Function App still starts locally after the upgrade.
-3. Remove the self-ignoring line from `.gitignore`, then commit both ignore files.
-4. Introduce the configuration classes from section 7, bound with the options pattern and validated at start-up.
-5. Move the token, account id, location id, target ids, name and email out of source and into configuration.
-6. Delete the two `Test1.cs` placeholders.
-
-### Phase 2 — Core booking logic
-
-7. Add `GetAvailableSlotsAsync` to `IPicktimeApiService`, with the slots response model.
-8. Fix defect 1, so `start_date_time` comes from `DateTimeOfBooking`.
-9. Change `CreateBookingAsync` to return a parsed `BookingResult`, and move response parsing out of the booking service.
-10. Add the London time zone handling from section 6.2, using `TimeProvider` so it is testable.
-11. Add the season gate from section 6.3.
-12. Update the models per section 8.1: the outcome enum, the grown `BookingAttempt` and `BookingSummary`, and the new `BookingResult`.
-13. Rewrite `PicktimeBookingService` to the algorithm in section 6.4, with per-hour outcomes. This depends on step 12.
-14. Add the HTTP trigger from section 6.7, so later phases have a way to fire a run on demand.
-
-### Phase 3 — Prove it against the real API
-
-15. Narrow the header set per section 14.1, and send only what is required.
-16. Capture a rejection per section 14.2, and make the error handling match it.
-17. Make one real booking from a local run, fired through the HTTP trigger, and confirm it appears on the Picktime site.
-
-### Phase 4 — Resilience and logging
-
-18. Add the resilience handler to the availability `GET` only, per section 9.1.
-19. Implement the ambiguous-outcome handling for the booking `POST`: re-read availability rather than resending.
-20. Turn off Application Insights sampling in `host.json`, per defect 9.
-21. Extend `BookingLoggingExtensions` for the per-hour outcomes, and emit the single structured summary event from section 10.3.
-22. Log `booking_email_confirmation` per booking, so the logs and the Picktime emails can be reconciled.
-23. Add the explicit authentication-failure log path.
-
-### Phase 5 — Tests
-
-24. Write the booking rules tests, items 1 to 11.
-25. Write the ambiguous-outcome tests, items 12 to 14. These are the ones that prevent a duplicate booking.
-26. Write the date rule and time zone tests, items 15 to 18.
-27. Write the API client tests, items 19 to 26.
-28. Write the two trigger tests, items 27 and 28.
-
-### Phase 6 — Infrastructure and deployment
-
-29. Create the Azure resources from section 13.1, on a Windows Consumption plan.
-30. Set every application setting, including `WEBSITE_TIME_ZONE`.
-31. Add the GitHub Actions workflow from section 13.4.
-32. Deploy, then confirm from the logs that the next scheduled run is 00:05 London and not 00:05 UTC.
-
-### Phase 7 — Verify in the season
-
-33. Fire the HTTP trigger against Azure and confirm a booking end to end, including the arrival of the Picktime email.
-34. Pin the section 10.4 query to an Azure dashboard, so a season of runs is one click away.
-35. Let one scheduled run happen unattended, then check the logs, the Picktime emails and the Picktime site all agree.
-36. Replace the one-line `README.md` with what a reader needs: what this does, how to run it locally, and which settings it requires.
-37. Record the result in `TODO.md` and close out any remaining items.
+It was moved out of this document on 2026-09-29, because the tasks change every working session and the specification does not.
 
 ---
 
