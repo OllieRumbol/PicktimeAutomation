@@ -1,10 +1,9 @@
 # Picktime Automation — Plan
 
-> **What this document is for:** It answers *how will we build it?* It turns the requirements in [spec.md](spec.md) into a technical design, and it is agreed before any code is written.
+> **What this document is for:** It answers *how will we build it?* It turns the requirements in `spec.md` into a technical design, and it is agreed before any code is written.
 
 Status: agreed, ready to implement
 Last updated: 2026-09-30
-Spec: [spec.md](spec.md)
 
 This document is the record of design decisions for this project. It says how the requirements in spec.md are met, and why that way. It does not restate requirements: it refers to them by section, such as "spec section 6.2". It was split out of spec.md on 2026-09-29. Keep it updated as decisions change.
 
