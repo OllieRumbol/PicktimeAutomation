@@ -2,7 +2,7 @@
 
 > **What this document is for:** It answers *what are we building, and why?* It is the source of truth for requirements.
 
-Status: agreed scope, ready to implement
+Status: Approved
 Last updated: 2026-09-30
 
 This document is the record of requirements for this project. It says what must be true, not how it is achieved. Each fact is stated once: the plan refers to sections here rather than repeating them. Keep it updated as requirements change.
@@ -80,7 +80,7 @@ The repository contains a working skeleton. It compiles and has the right shape.
    Line 60 of the root `.gitignore` matches `.gitignore`, so no ignore file is tracked. A fresh clone has no ignore rules, which puts `bin/`, `obj/` and `local.settings.json` at risk of being committed.
 
 7. **Runtime is out of support.**
-   All projects target .NET 6, which reached end of support in November 2024. Functions worker packages are correspondingly old (`Microsoft.Azure.Functions.Worker` 1.6.0).
+   The three application projects target .NET 6, which reached end of support in November 2024. The two test projects already target .NET 10. Functions worker packages are correspondingly old (`Microsoft.Azure.Functions.Worker` 1.6.0).
 
 8. **No CI/CD.**
    `.github/` exists but is empty.
@@ -184,7 +184,7 @@ Body, as captured from a **verified successful booking**:
 
 Notes on the fields:
 
-* The current code sends only the first twelve. The remaining fields come from the club's booking form. Send the payload exactly as captured, since a booking is known to succeed with it and the cost of sending the extra fields is nothing.
+* The current code sends only twelve of these fields. The remaining fields come from the club's booking form. Send the payload exactly as captured, since a booking is known to succeed with it and the cost of sending the extra fields is nothing.
 * `alt_number_Ext` has that unusual capitalisation in the real payload. Keep it exactly.
 * `birth_month_date` holds the literal string `month-selectDate`, which is the unset state of a form control. It is not a date. Send it verbatim.
 * `booking_addnl_fields` is a JSON **string** containing nested JSON, not an object. `ADDITIONAL ARCHER` is a custom field the club has added to its form.
@@ -248,6 +248,8 @@ This is a verification task rather than a blocker. See section 7.
 | Fallback granularity | Per hour, independently |
 
 Because the offset is exactly 7 days, the weekday is preserved. A Tuesday run books the following Tuesday. A full week is 9 bookings across 3 runs.
+
+**A late run books nothing.** A scheduled run that starts late, after a missed schedule, books nothing, because the run date would no longer be the scheduled day. It logs a warning that the run was missed. A missed run is caught up with the manual trigger (section 6.7).
 
 ### 6.2 Time zone rules
 
@@ -321,6 +323,8 @@ Notes:
 
 **If an availability read fails**, treat that target as having no free hours, log a warning naming the target, and carry on. One unreachable target must not stop the other from being used. If every availability read fails, every hour records `NoAvailability` and the run summary says so.
 
+**If a read or booking fails because the token is rejected**, the run reports authentication as the cause (section 5.3), not as no availability or a failed booking.
+
 **Unknown booking results.** Sometimes Picktime gives no clear answer to a booking request, for example no response at all. The booking may or may not exist. Then:
 
 1. Read availability again for that target and hour.
@@ -345,6 +349,8 @@ Each hour is independent. A failure on one hour, of any kind, must never stop th
 
 A run is a success only when all three hours reach `Booked`. Partial success is reported as partial, not as failure. An `Unconfirmed` hour makes a run partial.
 
+A run outside the season is reported as skipped, and appears in the run record like any other run.
+
 ### 6.6 Double booking
 
 No separate state store is needed. A slot already booked, whether by this automation or by hand, is absent from the availability response. The availability read is therefore the guard against double booking.
@@ -357,11 +363,12 @@ An HTTP-triggered function exists alongside the timer, for testing and for catch
 | --- | --- |
 | Method and route | `POST /api/book` |
 | Authorisation | Protected, so the URL alone is not enough to fire a booking |
-| Body or query | Optional `bookingDate` as `yyyy-MM-dd` |
+| Query string | Optional `bookingDate` as `yyyy-MM-dd`, for example `?bookingDate=2026-10-13` |
 | Default | When no date is given, use the same rule as the timer: London today plus 7 days |
 | Season gate | Applies, exactly as the timer does |
 | Invalid date | A `bookingDate` that is not a valid `yyyy-MM-dd` date is rejected with a clear error. Nothing is booked. |
 | Past date | A `bookingDate` before today, in London time, is rejected with a clear error. Nothing is booked. Today is allowed. |
+| Unexpected error | Reported as a failed run, with no internal details. The full detail goes to the logs. |
 | Response | The run summary as JSON, so the outcome is visible without opening the logs |
 
 It uses the same code path as the timer, so manual and scheduled runs cannot behave differently.
@@ -411,7 +418,7 @@ One observation on timing: bookings are made by hand until the automation is dep
 * A scheduled run on Tuesday, Thursday and Friday at 00:05 London books 17:00, 18:00 and 19:00 seven days ahead.
 * Target 2b is preferred and 3a is used per hour when 2b is taken.
 * Runs outside the season do nothing, and say so in the logs.
-* No secret or personal detail is in the repository.
+* No secret is in the repository's current files, and no personal detail is in the source code.
 * The automation never holds two bookings for the same hour, on the same target or different targets, even when a booking request times out.
 * All tests pass.
 * Deployment is automated, and a failing test stops a deployment.

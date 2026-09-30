@@ -44,23 +44,25 @@ Goal: the solution runs on .NET 10, nothing sensitive is in source, and configur
     - All five projects target `net10.0`.
     - The Functions worker packages are on their current major version.
     - The solution builds with no errors.
+    - `Program.cs` uses `FunctionsApplication.CreateBuilder(args)` with `ConfigureFunctionsWebApplication()`, as in plan section 3.
     - The Function App starts locally and the timer trigger is listed.
   - Verify: `dotnet build PicktimeAutomation/PicktimeAutomation.AzureFunctions.slnx`, then `func start` in `PicktimeAutomation/PicktimeAutomation.AzureFunctions`
-  - Notes: The start check needs Azure Functions Core Tools v4. Install it before this task.
+  - Notes: The start check needs Azure Functions Core Tools v4. Install it before this task. Azurite must also be running before `func start`, as in plan section 8.2.
 
 - [ ] **T3 — Move configuration out of source**
-  - Refs: spec 3 goal 4, spec 4.1 defect 4, spec 5.3, spec 6.1, plan 2, plan 6, plan 7.1, plan 7.2 rule 5, plan 7.6, test 26
+  - Refs: spec 3 goal 4, spec 4.1 defect 4, spec 5.3, spec 6.1, plan 2, plan 3, plan 6, plan 7.1, plan 7.2 rule 5
   - Depends on: T2
   - Done when:
-    - Options classes exist for the `Picktime`, `Archer` and `Booking` settings in plan section 2.
+    - Options classes exist for the `Picktime`, `Archer` and `Booking` settings in plan section 2. There is no time zone setting.
     - They are bound with the options pattern and validated at start-up.
-    - A missing `Picktime:ScanToken` stops start-up with a clear message.
+    - Service registration lives in `AddPicktimeServices(IServiceCollection)`, called from `Program.cs`, as in plan section 3.
+    - A missing `Picktime:ScanToken` or `BookingSchedule` stops start-up with a clear message.
     - The timer trigger reads its schedule from the `BookingSchedule` setting, as `%BookingSchedule%`. The schedule is no longer written in code.
     - No token, account id, location id, target id, name, email or schedule is a literal in source.
-    - `local.settings.json` holds every setting from plan section 2, and stays ignored.
+    - `local.settings.json` holds every setting from plan section 2, with lists as flattened keys, and stays ignored.
     - The two `Test1.cs` placeholders are deleted.
-    - Test 26 passes.
-  - Verify: the standard test command, then `git grep -n "eyJ" -- "*.cs"` returns nothing, then `func start` lists the timer trigger with the schedule from `BookingSchedule`
+    - `PicktimeAutomation.ServicesTests` references `PicktimeAutomation.Services`, ready for the tests in later tasks.
+  - Verify: the standard test command; then `git grep -n -E "eyJ|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[a-z]{2,}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-" -- "*.cs"` returns nothing (token, email address and resource ids); then `func start` lists the timer trigger with the schedule from `BookingSchedule`
   - Notes:
 
 ## Phase 2 — Core booking logic
@@ -73,7 +75,9 @@ Goal: the booking rules in spec section 6 are implemented and covered by their t
   - Done when:
     - `BookingOutcome`, `BookingResult` and the `BookingRequest` record exist as in plan section 3.1.
     - `BookingOutcome` includes `Unconfirmed`, and `BookingResult` has the three statuses `Succeeded`, `Rejected` and `Unknown`.
-    - `BookingAttempt` and `BookingSummary` can express per-hour outcomes, counts and an overall verdict.
+    - `BookingResult` carries `EmailConfirmationSent`.
+    - `BookingAttempt` and `BookingSummary` can express per-hour outcomes and counts.
+    - `BookingSummary` holds the booking date and a `RunVerdict` of `Success`, `Partial`, `Failure` or `Skipped`, as defined in plan section 3.1.
     - The solution builds.
   - Verify: `dotnet build PicktimeAutomation/PicktimeAutomation.AzureFunctions.slnx`
   - Notes: Moved before the API client work, because T6 returns `BookingResult`.
@@ -91,53 +95,60 @@ Goal: the booking rules in spec section 6 are implemented and covered by their t
   - Notes:
 
 - [ ] **T6 — Fix the booking request and parse its response**
-  - Refs: spec 4.1 defect 1, spec 5.2, plan 2, plan 3, plan 3.1, plan 4.1, plan 7.4, plan 7.6, tests 22–24, 30
-  - Depends on: T4
+  - Refs: spec 4.1 defect 1, spec 5.2, spec 5.3, plan 2, plan 3, plan 3.1, plan 4.1, plan 4.2, plan 7.4, plan 7.6, tests 22–24, 26, 30, 32
+  - Depends on: T4, T5
   - Done when:
     - `start_date_time` comes from `DateTimeOfBooking`.
     - The wire payload matches spec section 5.2 exactly. `alt_number_Ext` uses an explicit JSON property name. `booking_addnl_fields` is a constant, with no setting.
     - `CreateBookingAsync` returns a `BookingResult`, and takes a `CancellationToken`.
     - The result is `Succeeded`, `Rejected` or `Unknown`, classified as in plan section 4.1.
+    - An HTTP 401 or 403 from either API call throws `PicktimeAuthenticationException`, with no retry.
     - Response parsing has moved out of `PicktimeBookingService`. `BookingSuccessfulResponse` is kept.
-    - Tests 22–24 and 30 pass. Test 22 is the regression test for defect 1.
+    - Tests 22–24, 26, 30 and 32 pass. Test 22 is the regression test for defect 1. Test 26 covers both API calls.
   - Verify: the standard test command
   - Notes:
 
 - [ ] **T7 — Booking date and season gate**
-  - Refs: spec 6.2, spec 6.3, plan 3, plan 3.3, plan 7.2 rules 1, 3 and 4, plan 7.3, plan 7.5, tests 8, 15–18
-  - Depends on: T3
+  - Refs: spec 6.2, spec 6.3, spec 6.5, plan 3, plan 3.1, plan 3.3, plan 7.2 rules 1, 3 and 4, plan 7.3, plan 7.5, tests 8, 15–18
+  - Depends on: T3, T4
   - Done when:
     - `BookArcheryIndoorTargetAsync` takes an optional `bookingDate` and a `CancellationToken`, as in plan section 3.
-    - With no date, the booking date is London today plus `DaysAhead`, computed with the injected `TimeProvider`, not `DateTime.Today`.
+    - `LondonClock` exists as in plan section 3, built on the injected `TimeProvider`.
+    - With no date, the booking date is `LondonClock.Today()` plus `DaysAhead`, not `DateTime.Today`.
     - The season gate is a pure function of the booking date.
+    - A booking date outside the season returns a `BookingSummary` with the `Skipped` verdict, and makes no API calls.
+    - The timer trigger calls the new entry point with no date, so the solution still builds.
     - Tests 8 and 15–18 pass.
   - Verify: the standard test command
   - Notes:
 
 - [ ] **T8 — Rewrite the booking service**
-  - Refs: spec 4.1 defects 2 and 3, spec 6.4, spec 6.5, spec 6.6, plan 3.4, plan 4.2, plan 7.3, tests 1–7, 9–11
+  - Refs: spec 4.1 defects 2 and 3, spec 5.3, spec 6.4, spec 6.5, spec 6.6, plan 3.1, plan 3.4, plan 4.2, plan 7.3, tests 1–7, 9–11, 31
   - Depends on: T4, T5, T6, T7
   - Done when:
     - `PicktimeBookingService` follows the algorithm in spec section 6.4, using the configured target chain.
     - Availability reads run concurrently. Booking POSTs run one at a time, in hour order.
     - A failed availability read treats that target as full, and logs a warning naming the target.
+    - A `PicktimeAuthenticationException` from any call sets the `AuthenticationFailed` verdict.
     - Each hour ends in exactly one outcome from spec section 6.5.
     - A failure on one hour never stops the other hours.
-    - The timer trigger calls the new entry point with no date.
-    - Tests 1–7 and 9–11 pass.
+    - Tests 1–7, 9–11 and 31 pass.
   - Verify: the standard test command
   - Notes:
 
-- [ ] **T9 — Add the HTTP trigger**
-  - Refs: spec 6.7, plan 3, plan 4.2, plan 6, plan 7.7, tests 27–29
+- [ ] **T9 — Add the HTTP trigger and finish both triggers**
+  - Refs: spec 6.1, spec 6.7, plan 3, plan 4.2, plan 6, plan 7.7, tests 27–29, 34
   - Depends on: T8
   - Done when:
     - `POST /api/book` exists, protected by a function key.
-    - It accepts an optional `bookingDate` and returns the run summary as JSON.
+    - It uses ASP.NET Core integration, with the package in plan section 3.
+    - It reads an optional `bookingDate` from the query string only, and returns the run summary as JSON with HTTP 200.
+    - The past-date check uses `LondonClock`.
     - An invalid or past `bookingDate` returns HTTP 400 with the reason, and the booking service is not called.
     - It calls the same `BookArcheryIndoorTargetAsync` as the timer.
-    - Both triggers catch and log an exception from the booking service, so the host does not crash.
-    - Tests 27–29 pass.
+    - Both triggers catch and log an exception from the booking service, so the host does not crash. The HTTP trigger then returns HTTP 500 with no internal detail.
+    - The timer trigger skips a run with `IsPastDue` set, logs a warning, and does not call the booking service.
+    - Tests 27–29 and 34 pass.
   - Verify: the standard test command
   - Notes:
 
@@ -152,16 +163,16 @@ Goal: one real booking made from a local run.
     - The Postman steps in spec section 7.1 are done, and the result is recorded in spec section 5.4.
     - Plan section 2 lists any header setting that turned out to be required.
     - The code sends the `scantoken` header plus only the required headers.
-  - Verify: the standard test command, then T12
+  - Verify: the standard test command, and the Postman result recorded in spec section 5.4
   - Notes: The Postman part is manual and can be done at any time. The code change needs T6.
 
-- [ ] **T11 — Capture a rejected booking (manual)**
-  - Refs: spec 5.2, spec 7.2, plan 4.2, test 24
+- [ ] **T11 — Capture rejected requests (manual)**
+  - Refs: spec 5.2, spec 5.3, spec 7.2, plan 4.2, tests 24, 32
   - Depends on: T6
   - Done when:
-    - A real rejection is captured: HTTP status code, `status` and `message`.
-    - It is recorded in spec section 5.2.
-    - The table in plan section 4.2 and the test 24 fixture match it, and the "Provisional" note is removed.
+    - A real slot-taken rejection is captured: HTTP status code, `status` and `message`. It is recorded in spec section 5.2.
+    - A real token rejection is captured, from a request sent with a deliberately invalid `scantoken`. It is recorded in spec section 5.3.
+    - The table in plan section 4.2 and the fixtures for tests 24 and 32 match them, and the "Provisional" note is removed.
   - Verify: the standard test command
   - Notes:
 
@@ -172,7 +183,7 @@ Goal: one real booking made from a local run.
     - A booking fired through the local HTTP trigger returns `Booked` with a booking id.
     - The booking shows on the Picktime site.
     - The Picktime confirmation email arrives.
-  - Verify: `func start`, then `POST http://localhost:7071/api/book` with a `bookingDate`
+  - Verify: `func start`, then `POST http://localhost:7071/api/book?bookingDate=<yyyy-MM-dd>`
   - Notes: This makes a real booking. Cancel it by hand if it is not wanted.
 
 ## Phase 4 — Resilience and logging
@@ -180,12 +191,14 @@ Goal: one real booking made from a local run.
 Goal: failures are handled safely, and every run can be understood from its logs.
 
 - [ ] **T13 — Retry the availability read only**
-  - Refs: plan 4.1, plan 4.2
+  - Refs: spec 9, plan 3, plan 4.1, plan 4.2, plan 7.2 rule 7, plan 7.6, test 33
   - Depends on: T8
   - Done when:
     - The availability `GET` retries up to 3 times on network error, timeout or HTTP 5xx, using `Microsoft.Extensions.Http.Resilience`.
-    - The booking `POST` has no automatic retry, and the setup makes it impossible to add one by accident.
-  - Verify: the standard test command, and a review of the HTTP client registration
+    - The booking `POST` has no automatic retry, and a 20-second timeout. Both clients are registered in `AddPicktimeServices`.
+    - `host.json` sets `functionTimeout` to 10 minutes, as in plan section 4.1.
+    - Test 33 passes, built from the real `AddPicktimeServices` registration.
+  - Verify: the standard test command
   - Notes:
 
 - [ ] **T14 — Handle an unknown booking result**
@@ -208,9 +221,9 @@ Goal: failures are handled safely, and every run can be understood from its logs
     - Host sampling is off in `host.json`, and no sampling is configured in the worker.
     - Each run logs the start line from spec section 6.2, including the season gate result. A skipped run logs why.
     - Each run logs availability per target, and each attempt with its outcome, booking id and API message.
-    - `booking_email_confirmation` is logged per booking.
+    - `booking_email_confirmation` is logged per booking, from `BookingResult.EmailConfirmationSent`.
     - Logging is structured, with named placeholders.
-    - Each run writes one structured summary event, as in plan section 5.3. `BookingLoggingExtensions` is the only place it is written.
+    - Each run, including a skipped run, writes one structured summary event, as in plan section 5.3. `BookingLoggingExtensions` is the only place it is written.
     - A malformed response body is logged at Warning level, cut to its first 1 KB.
     - HTTP 401 or 403 logs an error that names authentication as the cause.
     - The `scantoken` is never logged. Checked by review.
@@ -222,23 +235,27 @@ Goal: failures are handled safely, and every run can be understood from its logs
 Goal: the Function runs in Azure on the correct schedule, deployed by CI.
 
 - [ ] **T16 — Create the Azure resources (manual)**
-  - Refs: spec 8 assumption 8, plan 2, plan 3.3, plan 8.1, plan 8.3
-  - Depends on: —
+  - Refs: spec 8 assumption 8, plan 2, plan 3.3, plan 6, plan 8.1, plan 8.3
+  - Depends on: T10
   - Done when:
     - The resources in plan section 8.1 exist, on a Windows Consumption plan in UK South, in a pay-as-you-go subscription.
-    - Every application setting from plan sections 2 and 8.1 is set, including `WEBSITE_TIME_ZONE` and `BookingSchedule`.
+    - Every application setting from plan sections 2 and 8.1 is set, including `WEBSITE_TIME_ZONE` and `BookingSchedule`. Lists use the flattened keys in plan section 2.
     - A £1 monthly budget on the resource group emails an alert when actual cost reaches £1.
-  - Verify: check the settings list in the portal (Function App → Environment variables), and the budget (Cost Management → Budgets)
-  - Notes: Azure CLI is not installed. The portal works.
+    - Application Insights is workspace-based, and its Log Analytics workspace has a daily cap of 0.1 GB.
+    - The user-assigned managed identity exists, with a federated credential for this repository's `main` branch and the Website Contributor role on the Function App.
+    - SCM basic authentication is off, and HTTPS Only is on, on the Function App.
+  - Verify: check the settings list in the portal (Function App → Environment variables), the budget (Cost Management → Budgets), and the identity's federated credential and role
+  - Notes: Azure CLI is not installed. The portal works. The Function App's Deployment Center can create the managed identity and its federated credential; choose "User-assigned identity", not "Basic authentication".
 
 - [ ] **T17 — Add the GitHub Actions workflow**
-  - Refs: spec 4.1 defect 8, spec 9, plan 6, plan 8.4
+  - Refs: spec 4.1 defect 8, spec 9, plan 6, plan 8.1, plan 8.4
   - Depends on: T16
   - Done when:
     - One workflow builds and tests on push to `main` and on pull request.
     - It deploys only on `main`, and only when the tests pass.
-    - The publish profile is a repository secret.
-  - Verify: a pull request shows a green build, and the deploy job is skipped
+    - It signs in with OpenID Connect, as in plan section 8.4. No deployment secret is stored in GitHub.
+    - The client id, tenant id and subscription id are GitHub repository variables.
+  - Verify: a pull request shows a green build and the deploy job is skipped; a push to `main` deploys; SCM basic authentication is still off
   - Notes:
 
 - [ ] **T18 — Deploy and check the schedule**
@@ -258,7 +275,7 @@ Goal: the automation is proved in production and left running.
   - Refs: spec 6.7, spec 9, plan 5.1
   - Depends on: T18
   - Done when: a booking fired through the Azure HTTP trigger shows on the Picktime site, and its confirmation email arrives.
-  - Verify: `POST https://<function-app>.azurewebsites.net/api/book?code=<function key>`
+  - Verify: `POST https://<function-app>.azurewebsites.net/api/book?bookingDate=<yyyy-MM-dd>`, with the function key in the `x-functions-key` header
   - Notes:
 
 - [ ] **T20 — Pin the 90-day query (manual)**

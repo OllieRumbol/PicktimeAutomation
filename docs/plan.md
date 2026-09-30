@@ -2,7 +2,7 @@
 
 > **What this document is for:** It answers *how will we build it?* It turns the requirements in `spec.md` into a technical design, and it is agreed before any code is written.
 
-Status: agreed, ready to implement
+Status: Approved
 Last updated: 2026-09-30
 
 This document is the record of design decisions for this project. It says how the requirements in spec.md are met, and why that way. It does not restate requirements: it refers to them by section, such as "spec section 6.2". It was split out of spec.md on 2026-09-29. Keep it updated as decisions change.
@@ -37,10 +37,27 @@ No secret or personal detail stays in source. Local development uses `local.sett
 | `Booking:Targets` | `[{ "Name": "2b", "ResourceId": "…" }, { "Name": "3a", "ResourceId": "…" }]` | In preference order |
 | `Booking:SeasonStart` | `10-01` | Month and day |
 | `Booking:SeasonEnd` | `03-31` | Month and day |
-| `Booking:TimeZone` | `Europe/London` | |
 | `BookingSchedule` | `0 5 0 * * TUE,THU,FRI` | The timer's NCRONTAB expression: 00:05 on Tuesday, Thursday and Friday. See below. |
 
 Bind these with the options pattern and validate them at start-up, so a missing token fails immediately and loudly rather than at 00:05. `BookingSchedule` is the one exception. See below.
+
+The example values for days ahead, hours, targets and season come from spec sections 6.1 and 6.3. `DaysAhead` and the season dates are settings even though spec section 3, goal 4 does not require it: they cost nothing, and Picktime's release window or the club's season could change.
+
+There is deliberately no time zone setting. The club is in London, so `Europe/London` is one constant in `LondonClock` (section 3), not something to configure.
+
+**Lists are written as flattened keys.** `local.settings.json` and the Azure app settings hold only flat text values, so `Booking:Hours` and `Booking:Targets` cannot be written as lists. Write one key per item, with its position as a number. The options binding reads them back as lists.
+
+| Key | Value |
+| --- | --- |
+| `Booking:Hours:0` | `17` |
+| `Booking:Hours:1` | `18` |
+| `Booking:Hours:2` | `19` |
+| `Booking:Targets:0:Name` | `2b` |
+| `Booking:Targets:0:ResourceId` | `<2b resource id>` |
+| `Booking:Targets:1:Name` | `3a` |
+| `Booking:Targets:1:ResourceId` | `<3a resource id>` |
+
+The `:` separator works on Windows, which this project uses (section 8.1). A further target is added as `Booking:Targets:2:Name` and `Booking:Targets:2:ResourceId`, which is still a configuration change, as spec section 3, goal 4 requires. A single text value such as `"17,18,19"` was rejected: it needs custom parsing, and it cannot hold the name and id pairs.
 
 The API client sends the `scantoken` header, plus only the headers that spec section 5.4 records as required. That set is unknown until spec section 7.1 is resolved, and it is resolved before the first real booking.
 
@@ -49,8 +66,8 @@ There is deliberately no setting for `booking_addnl_fields`. It is a constant, b
 **The schedule is a setting, not code.** The timer trigger reads it as `[TimerTrigger("%BookingSchedule%")]`, so the run days and time change without a code change, as spec section 3, goal 4 requires. Today the expression is written directly in `TargetBookingFunction.cs`, which does not meet that goal.
 
 * `BookingSchedule` is the single source of truth for when the automation runs. There is deliberately no separate `RunDays` setting, because a second value describing the same schedule would be a second place to change and a second place to get wrong.
-* The name is flat, with no `Booking:` prefix, because the Functions host reads it directly. It is not bound to the options classes, so options validation does not cover it.
-* A missing `BookingSchedule` stops the Function from starting, which is loud and immediate. A mistyped expression is caught by the check in section 8.1 that the next scheduled run is 00:05 London time.
+* The name is flat, with no `Booking:` prefix, because the Functions host reads it directly. It is not bound to the options classes.
+* Without a check, a missing `BookingSchedule` would only put the timer function in an error state, while the HTTP trigger kept running, which is easy to miss. So the start-up validation in `AddPicktimeServices` also checks that `BookingSchedule` is set, and stops start-up if it is not. A mistyped expression is caught by the check in section 8.1 that the next scheduled run is 00:05 London time.
 
 ---
 
@@ -95,6 +112,19 @@ When no date is supplied, the service computes it from the injected `TimeProvide
 
 That placement is deliberate. If the trigger computed the date, the date rule — the thing most likely to be wrong, per spec section 6.2 — would live in an Azure Functions entry point, which is awkward to unit test. Keeping it inside the service means both triggers are thin adapters with no logic of their own, and the rule is covered by ordinary unit tests.
 
+**Service registration** lives in one extension method, `AddPicktimeServices(IServiceCollection)`, which `Program.cs` calls. This includes the options, the services and both HTTP clients with their retry policies. Tests build the real registrations from the same method, so test 33 checks the configuration that actually runs (section 7.2, rule 7).
+
+**Host setup and HTTP model.** `Program.cs` uses `FunctionsApplication.CreateBuilder(args)` with `ConfigureFunctionsWebApplication()`, which is ASP.NET Core integration, with the package `Microsoft.Azure.Functions.Worker.Extensions.Http.AspNetCore`. It replaces the current `new HostBuilder()` with `ConfigureFunctionsWorkerDefaults()`, for two reasons:
+
+1. `CreateBuilder` loads `appsettings.json` automatically. With `new HostBuilder()` it is not loaded, so the worker log levels in section 5.2 would be silently ignored.
+2. The HTTP trigger takes an ASP.NET Core `HttpRequest`, which tests 27–29 build from a plain `DefaultHttpContext`. The built-in `HttpRequestData` model needs a mocked `FunctionContext` instead.
+
+**The timer trigger** checks `TimerInfo.IsPastDue`. If it is set, the run was missed and has started late, so the trigger logs a warning and does not call the booking service, as spec section 6.1 requires. Working out the date from the missed occurrence's scheduled time was rejected: it needs the timer's schedule status, which is fiddly and hard to test. Skipping is safe: the worst case is a warning and a manual catch-up, never a wrong booking. A run that is only a little late on the same day is also skipped.
+
+**The HTTP trigger** reads `bookingDate` from the query string only, as spec section 6.7 requires. It checks the date before calling the booking service. It returns the `BookingSummary` as JSON with HTTP 200, HTTP 400 for an invalid or past date, and HTTP 500 for an unexpected error (section 4.2).
+
+**`LondonClock`** is one small injected class with `DateOnly Today()`. It is built on the injected `TimeProvider` and the constant `Europe/London`, resolved with `TimeZoneInfo.FindSystemTimeZoneById`. The booking service uses it for the default booking date, and the HTTP trigger uses it for the past-date check. So the date rule stays in one place (section 7.2, rule 3), and both uses are testable with `FakeTimeProvider`.
+
 ### 3.1 Model changes
 
 **`BookingRequest` stays minimal.** It holds only what varies per booking:
@@ -122,9 +152,23 @@ public sealed class BookingAttempt
 }
 ```
 
-`BookingSummary` keeps its list of attempts, and replaces the single `Success` boolean with counts per outcome plus an overall verdict, so a partial result reads as partial, as spec section 6.5 requires.
+`BookingSummary` holds the booking date, its list of attempts, counts per outcome, and a verdict. It replaces the single `Success` boolean, so a partial result reads as partial, as spec section 6.5 requires.
 
-**`BookingResult`** is the new return type of `CreateBookingAsync`. It holds a status, the booking id from `data.id`, and the API's `message`. The status has three values, defined in section 4.1:
+```csharp
+public enum RunVerdict { Success, Partial, Failure, Skipped, AuthenticationFailed }
+```
+
+| Verdict | When |
+| --- | --- |
+| `AuthenticationFailed` | Any call raised `PicktimeAuthenticationException` (section 4.2). This overrides every other verdict, as spec section 6.4 requires. The hours still record what happened to them. |
+| `Success` | All three hours are `Booked`. |
+| `Partial` | At least one hour is `Booked` or `Unconfirmed`, but not all three are `Booked`. |
+| `Failure` | No hour is `Booked` or `Unconfirmed`. |
+| `Skipped` | The booking date is outside the season. No hours are attempted. |
+
+A skipped run still returns a `BookingSummary`, with zero counts, and still writes the summary event in section 5.3. So it appears in the section 5.4 query like any other run, as spec section 6.5 requires. The HTTP trigger returns it with HTTP 200.
+
+**`BookingResult`** is the new return type of `CreateBookingAsync`. It holds a status, the booking id from `data.id`, the API's `message`, and `EmailConfirmationSent`, read from `booking_email_confirmation`. The status has three values, defined in section 4.1:
 
 ```csharp
 public enum BookingResultStatus { Succeeded, Rejected, Unknown }
@@ -156,7 +200,7 @@ The two design choices that keep this open are the configurable target chain and
 Spec section 6.2 requires both the trigger time and the booking date to use London time. They are handled separately, and both are needed:
 
 1. **The trigger time.** Set the Function App setting `WEBSITE_TIME_ZONE` to `GMT Standard Time`, so the `BookingSchedule` expression is evaluated in London time. Despite its name, that Windows id means UK time including British Summer Time. It is not fixed to GMT. A Windows plan is used for this reason — see section 8.1.
-2. **The date arithmetic.** Compute the booking date from the current London time, not from `DateTime.Today`, which is UTC on the host. Use `TimeZoneInfo.FindSystemTimeZoneById("Europe/London")`, which .NET resolves on both Linux and Windows.
+2. **The date arithmetic.** Compute the booking date from the current London time, not from `DateTime.Today`, which is UTC on the host. `LondonClock` (section 3) does this with `TimeZoneInfo.FindSystemTimeZoneById("Europe/London")`, which .NET resolves on both Linux and Windows.
 
 Both are covered by the tests in section 7.5.
 
@@ -203,19 +247,32 @@ It returns `Succeeded` for a parsed `status: true`, and `Rejected` for a parsed 
 
 That turns an unsafe retry into a safe one, using the availability endpoint we already have. It never holds two bookings for the same hour, as spec section 9 requires. The cost is that, rarely, an hour that 3a could have filled is lost.
 
+**Timeouts.** Each is chosen, not left to a default, because the booking timeout decides when a result becomes `Unknown`.
+
+| Timeout | Value | Reason |
+| --- | --- | --- |
+| Booking `POST` | 20 seconds | About 5 times the measured 3.64 seconds, so a slow booking that succeeds is not wrongly marked `Unknown`. Short enough that a hung request does not stall the run. `HttpClient`'s default of 100 seconds is not used. |
+| Availability `GET` | The standard resilience handler defaults: 10 seconds per attempt, 30 seconds in total | Reads are quick and safe to repeat. The defaults suit them, so nothing is configured. |
+| Whole run | `functionTimeout` of 10 minutes in `host.json` | The Consumption plan defaults to 5 minutes, with a maximum of 10 (checked on 2026-09-30). Worst case, with every call timing out, is 30 seconds of reads plus, for each of 3 hours, two attempts and two re-reads of 100 seconds in total: about 5.5 minutes. 10 minutes leaves room for a cold start. |
+
+An HTTP-triggered function must respond within 230 seconds, whatever `functionTimeout` says. In the worst case above, a manual run loses its HTTP response, but the run itself continues to the end and logs as normal.
+
 ### 4.2 Everything else
 
-**Provisional.** No real rejection has been captured yet (spec section 7.2). The `status: false` row assumes a rejection has the failure shape in spec section 5.2. When a rejection is captured, update this table and the test 24 fixture to match.
+**Provisional.** No real rejection has been captured yet (spec section 7.2). The `status: false` row assumes a slot-taken rejection has the failure shape in spec section 5.2. The authentication row assumes a rejected token returns HTTP 401 or 403. When real rejections are captured, update this table and the fixtures for tests 24 and 32 to match.
 
 | Situation | Behaviour |
 | --- | --- |
-| HTTP 401 or 403, or a token rejection message | No retry. Log at error level, naming authentication as the cause. This meets spec section 5.3. |
+| HTTP 401 or 403, or a token rejection message | The API client throws `PicktimeAuthenticationException`, from either call, with no retry. The booking service catches it and sets the `AuthenticationFailed` verdict (section 3.1). Log at error level, naming authentication as the cause. This meets spec sections 5.3 and 6.4. |
 | `status: false` — slot taken | No retry. Fall through to the next target, as spec section 6.4 requires. |
 | Malformed or empty body from the booking `POST` | The result is `Unknown`. Handle as section 4.1. Log the raw body at Warning level, cut to its first 1 KB. |
 | Malformed or empty body from the availability `GET` | The read has failed. Handle as spec section 6.4 requires for a failed read. Log the raw body at Warning level, cut to its first 1 KB. |
 | An availability read fails after retries | Handle as spec section 6.4 requires: the target has no free hours. |
 | An hour throws unexpectedly | Catch, record `Failed`, and continue to the next hour. This meets spec section 6.5. |
 | Invalid or past `bookingDate` on the HTTP trigger | Return HTTP 400 with the reason, and do not call the booking service. This meets spec section 6.7. |
+| Unexpected error on the HTTP trigger | Log the exception, and return HTTP 500 with a short message: "The booking run failed. See the logs." No stack trace or internal detail is returned. This meets spec section 6.7. |
+
+**Accepted risk: a manual run at the same time as a scheduled run.** Two runs in parallel could both see an hour as free and both book it, which spec section 9 forbids. Guarding against it would need a lock shared between runs. It is accepted instead, because only one person uses the manual trigger. Rule: do not run the manual trigger around 00:05 on a run day.
 
 Retries on the `GET` use the standard `Microsoft.Extensions.Http.Resilience` handler. Because the policy differs per endpoint, either register two named clients, or register the handler only for the availability path. Whichever is chosen, it must be impossible to accidentally pick up an automatic retry on the booking POST.
 
@@ -245,7 +302,7 @@ Application Insights stays within its free allowance. See section 8.3.
 | --- | --- |
 | Packages | `Microsoft.Azure.Functions.Worker.OpenTelemetry` and `Azure.Monitor.OpenTelemetry.Exporter` |
 | `Program.cs` | `AddOpenTelemetry().UseFunctionsWorkerDefaults().UseAzureMonitorExporter()`. Register the exporter only when `APPLICATIONINSIGHTS_CONNECTION_STRING` is set, so local runs work without Azure. |
-| `host.json` | `"telemetryMode": "OpenTelemetry"`. Also set `samplingSettings.isEnabled` to `false`, which fixes defect 9 in spec section 4.1 for the host's own logs. |
+| `host.json` | `"telemetryMode": "OpenTelemetry"`. Also set `samplingSettings.isEnabled` to `false`, which fixes defect 9 in spec section 4.1 for the host's own logs. `functionTimeout` is set here too (section 4.1). |
 | `appsettings.json` | Worker log levels: `Default` at `Information`, `Microsoft` at `Warning`. Worker log levels are set here, not in `host.json`. |
 
 No sampling is configured in the worker. Sampling is designed for high volume, and at three runs a week there is nothing to gain from it. Whether the exporter samples by default was not confirmed, so the first run in Azure is checked: the section 5.4 query must return it with every column filled.
@@ -324,10 +381,12 @@ Adding a push or email alert later is a small change. An Azure Monitor alert on 
 | `scantoken` in git history | Low severity, and accepted. Spec section 5.3 shows it is anonymous and does not expire, so it grants nothing the public does not already have, and rotation would achieve nothing. |
 | `scantoken` going forward | Move to configuration, and to a Function App application setting in Azure. Not in source. |
 | Email address | Move to configuration. The repository is public, so it should not be a literal in source. |
+| Name and email in git history | Accepted on 2026-09-30, by the owner's choice. The archer's name and email were literals in committed code, so they stay in git history after they move to configuration. The name also appears as example values in section 2. Rewriting history was rejected: it is destructive, and GitHub keeps the old commits in merged pull requests anyway. |
 | `.gitignore` | Remove the self-ignoring line, then commit both ignore files. This matters because the token will live in `local.settings.json`. |
 | `local.settings.json` | Stays ignored. Never committed. |
-| GitHub Actions secrets | The Azure publish profile is held as a repository secret. Secrets are not exposed to pull requests from forks. |
-| HTTP test trigger | A function key gives the protection required by spec section 6.7. |
+| Deployment credentials | GitHub Actions signs in to Azure with OpenID Connect (section 8.4). No deployment secret is stored in GitHub, and SCM basic authentication stays off on the Function App. A publish profile was rejected: Microsoft marks it "not recommended", and it needs basic authentication switched on, which Microsoft says makes the app less secure (checked on 2026-09-30). |
+| HTTP test trigger | A function key gives the protection required by spec section 6.7. The key is sent in the `x-functions-key` header, not the URL, so it does not appear in browser history or logs of URLs. |
+| HTTPS | HTTPS Only is on for the Function App, so the function key is never sent unencrypted. |
 | Logging the token | Check at code review that the `scantoken` is never logged. Not covered by a test — see section 7.6 for why. |
 
 ---
@@ -342,13 +401,13 @@ Keep MSTest, which both test projects already use. Replace the `Test1.cs` placeh
 
 Every test below exists because it catches a specific defect, and each is listed with the defect it catches. If a test cannot be justified that way, it does not get written. Consequences worth stating plainly:
 
-* Thin adapters are not tested for being thin. The two Azure Function triggers hold no logic beyond the HTTP trigger's input check, so they get three tests between them, not a suite.
+* Thin adapters are not tested for being thin. The two Azure Function triggers hold no logic beyond two small checks (the HTTP trigger's input check and the timer's late-run check), so they get four tests between them, not a suite.
 * No test asserts a property getter, a constructor, or that a mock was called in a particular order.
 * If `PicktimeAutomation.AzureFunctionsTests` ends up with nothing worth asserting, delete the project rather than pad it.
 
 ### 7.2 Design for testability
 
-Testability is a design constraint here, not something retrofitted. Six rules, each of which removes a reason a test would otherwise be hard to write:
+Testability is a design constraint here, not something retrofitted. Seven rules, each of which removes a reason a test would otherwise be hard to write:
 
 1. **Use `TimeProvider`, never `DateTime.Now` or `DateTime.Today`.** .NET 10 ships `TimeProvider` and `FakeTimeProvider` (in `Microsoft.Extensions.TimeProvider.Testing`), so the BST and GMT cases in section 7.5 are ordinary unit tests with no custom clock abstraction to invent.
 2. **All HTTP sits behind `IPicktimeApiService`.** `PicktimeBookingService` never touches `HttpClient`, so the booking rules are testable with a hand-written fake and no message-handler plumbing.
@@ -356,26 +415,13 @@ Testability is a design constraint here, not something retrofitted. Six rules, e
 4. **Decisions are pure functions where they can be.** The season gate takes a date and returns a verdict. It reads no clock, no configuration and no ambient state, so its test is a table of dates.
 5. **Configuration arrives as injected options objects,** not as `IConfiguration` lookups scattered through the code. A test constructs the options it needs.
 6. **Methods return inspectable results.** `BookArcheryIndoorTargetAsync` returns a `BookingSummary` describing every hour, so a test asserts the returned outcome rather than reading log output.
+7. **Registration is shared, not copied.** `AddPicktimeServices` is the only place services and HTTP clients are registered (section 3). A test that needs the real wiring calls it, rather than repeating the registration and drifting from it.
 
 Rule 6 is what makes most of section 7.3 possible at all. The current `BookingSummary` cannot express a per-hour outcome, which is why section 3.1 grows it.
 
 ### 7.3 Booking rules — `PicktimeAutomation.ServicesTests`
 
-The highest-value group. These cover the logic that decides what gets booked, driven by a fake `IPicktimeApiService`.
-
-1. All three hours free on 2b, so all three book on 2b.
-2. 18:00 taken on 2b but free on 3a, so 17:00 and 19:00 book on 2b and 18:00 books on 3a.
-3. An hour taken on both targets records `NoAvailability` and does not stop the other hours.
-4. Availability says free, but the booking is rejected, so the next target is tried.
-5. Both targets reject the booking, which records `Failed`.
-6. A transient throw on one hour does not prevent the other two from booking.
-7. A booking date outside the season performs no API calls at all.
-8. Season boundaries: 1 October and 31 March are inside; 30 September and 1 April are outside.
-9. The availability read for 2b fails, so 2b is treated as full and all three hours book on 3a.
-10. Both availability reads fail, so every hour records `NoAvailability` and no booking is attempted.
-11. A partial result — two hours booked, one not — is reported as partial, not as failure.
-
-Each test names the defect it catches.
+The highest-value group. These cover the logic that decides what gets booked, driven by a fake `IPicktimeApiService`. Each test names the defect it catches.
 
 | # | Test | Defect it catches |
 | --- | --- | --- |
@@ -390,6 +436,7 @@ Each test names the defect it catches.
 | 9 | The availability read for 2b fails, so 2b is treated as full and all three hours book on 3a | A single failed read costs the whole run |
 | 10 | Both availability reads fail, so every hour records `NoAvailability` and nothing is booked | A blind booking attempt after a failed read |
 | 11 | Two hours booked and one not is reported as partial, not as failure | A mostly-successful run reads as a total failure in the logs |
+| 31 | An availability read raises `PicktimeAuthenticationException`, so the verdict is `AuthenticationFailed` and no booking is attempted | A rejected token looks like a fully booked night |
 
 ### 7.4 Unknown booking results — section 4.1
 
@@ -410,7 +457,7 @@ Spec section 6.2 calls this the most likely source of a silent, wrong-day bookin
 | --- | --- | --- |
 | 15 | 00:05 London on Tuesday 6 October 2026 books Tuesday 13 October 2026, even though the host clock reads 23:05 UTC on 5 October | The BST off-by-one-day booking |
 | 16 | A run during GMT computes the booking date correctly | A fix for BST that breaks the rest of the season |
-| 17 | A run on a clock-change weekend computes the booking date correctly | The edge case nobody tests by hand |
+| 17 | A run at 00:05 London on Friday 23 October 2026, in BST, books Friday 30 October 2026, in GMT, across the clock change on Sunday 25 October | The edge case nobody tests by hand |
 | 18 | With no date supplied, the service computes London today plus the configured `DaysAhead` | The default path diverging from the explicit one |
 
 ### 7.6 API client — `PicktimeAutomation.ServicesTests`
@@ -427,18 +474,21 @@ Use a stub `HttpMessageHandler`. These are worth writing despite looking like wi
 | 24 | A `status: false` response parses as `Rejected` and preserves the message | A rejection treated as `Unknown`, which blocks the fall-through to 3a |
 | 25 | Malformed JSON in a slots response is reported as a failed read, not thrown | An unparseable body crashing the run |
 | 26 | The `scantoken` header is present on every request | Auth silently missing, so nothing books and the reason is unclear |
+| 32 | An HTTP 401 or 403 from either call raises `PicktimeAuthenticationException`, and the request is not retried | A token rejection treated as a normal failure, or retried |
+| 33 | Built from the real `AddPicktimeServices` registration, with a stub handler that returns HTTP 503: the booking `POST` reaches the handler exactly once, and the availability `GET` reaches it 4 times (the first try plus 3 retries) | A retry policy added to the booking client, which can book the same slot twice |
 
 Not tested: that the token is never written to a log. Asserting the absence of a value across arbitrary log calls is brittle and proves little. It is a code review point in section 6 instead.
 
 ### 7.7 Function triggers — `PicktimeAutomation.AzureFunctionsTests`
 
-Three tests, deliberately. Both triggers are thin adapters. The only logic is the HTTP trigger's input check, so there is nothing else here worth asserting.
+Four tests, deliberately. Both triggers are thin adapters. The only logic is the HTTP trigger's input check and the timer's late-run check, so there is nothing else here worth asserting.
 
 | # | Test | Defect it catches |
 | --- | --- | --- |
-| 27 | An exception from the booking service is caught and logged, so the Function does not crash the host | A thrown exception taking down the host and losing the log record of why |
+| 27 | An exception from the booking service is caught and logged by both triggers, so the Function does not crash the host, and the HTTP trigger returns 500 with no internal detail | A thrown exception taking down the host and losing the log record of why, or leaking a stack trace to the caller |
 | 28 | The HTTP trigger passes a supplied date through unchanged, and returns the run summary as JSON | The manual trigger behaving differently from the scheduled one |
 | 29 | A malformed or past `bookingDate` returns 400, and the booking service is not called | A typo in a manual run books the wrong day, or crashes |
+| 34 | A timer run with `IsPastDue` set does not call the booking service, and logs a warning | A late run books a day that was never scheduled |
 
 ---
 
@@ -451,10 +501,12 @@ Three tests, deliberately. Both triggers are thin adapters. The only logic is th
 | Region | UK South | Nearest region |
 | Plan | Consumption (serverless) | Within the free grant |
 | Storage account | Standard LRS | Required by the timer trigger |
-| Application Insights | Free tier | See section 8.3 |
+| Application Insights | Workspace-based | Holds no data itself. It sends everything to the Log Analytics workspace below. |
+| Log Analytics workspace | Pay-as-you-go (per GB), with a daily cap of 0.1 GB | Where logs are stored and charged. The first 5 GB a month per billing account is free, and Application Insights data is kept for 90 days at no charge (checked on 2026-09-30). Expected usage: a few MB a month. See section 8.3. |
 | Function App | .NET 10 isolated worker | |
 | Operating system | **Windows** | Required for .NET 10 on the Consumption plan, and chosen for the time zone setting. See below. |
 | Budget | £1 per month, on the resource group | Emails an alert when actual cost reaches £1. Budgets are free. See section 8.3. |
+| Managed identity | User-assigned | Used by GitHub Actions to deploy (section 8.4). It has a federated credential that trusts this repository's `main` branch, and the Website Contributor role on this Function App only. Managed identities have no charge. |
 
 Required application settings:
 
@@ -473,6 +525,8 @@ Plus every setting in section 2.
 
 **Flex Consumption**, Microsoft's recommended successor to the Linux Consumption plan, runs only on Linux. Reason 2 therefore applies to it too, so it is not used.
 
+Microsoft labels the Consumption plan "legacy" and recommends Flex Consumption for new apps. On Windows the Consumption plan is still generally available, with no retirement date (checked on 2026-09-30). Check this again before each season.
+
 The code is unaffected by this choice. See section 3.3. After deployment, confirm from the logs that the next scheduled run is 00:05 London time, not 00:05 UTC.
 
 ### 8.2 Local prerequisites
@@ -484,8 +538,11 @@ Checked on this machine:
 | .NET 10 SDK | Installed, 10.0.401 | Building and testing |
 | Azure Functions Core Tools v4 | **Not installed** | Running the Function locally |
 | Azure CLI | **Not installed** | Creating the Azure resources. The portal is an alternative. |
+| Azurite (local storage emulator) | Bundled with Visual Studio 2026. **Not installed** for the terminal. Node.js and npm are installed. | Running the Function locally. The timer trigger needs storage, and `local.settings.json` points it at Azurite. |
 
 Install Core Tools before the .NET upgrade, because the upgrade is checked by starting the Function locally. Azure CLI blocks nothing.
+
+**Azurite** must be running before the Function starts locally. From Visual Studio, nothing is needed, because Visual Studio starts it. From a terminal, install it once with `npm install -g azurite`, then run `azurite` in a second terminal before `func start`. It is free, and nothing runs in Azure.
 
 ### 8.3 Cost
 
@@ -493,7 +550,8 @@ Effectively free, but not literally zero.
 
 * **Functions free grant**, checked on 2026-09-30: 1 million executions and 400,000 GB-s of compute per month. It applies only to pay-as-you-go subscriptions, and it is shared by all function apps in the subscription.
 * **Expected usage:** about 13 runs a month. Each run takes about 20 seconds, so at up to 0.25 GB of memory that is under 100 GB-s a month. It is negligible against the grant, even with other function apps in the same subscription.
-* Application Insights: 5 GB per month of ingestion is free. About 78 runs per season, each writing a few dozen log lines, is negligible against it.
+* Logs (Log Analytics workspace): the first 5 GB a month per billing account is free. About 78 runs per season, each writing a few dozen log lines, is negligible against it.
+* Daily cap: 0.1 GB a day on the workspace, which is free to set. Expected usage is hundreds of times smaller. It stops a logging bug from running up a cost before the £1 budget alert can report it. The trade-off: if the cap is ever reached, logs stop for the rest of that day, which can only happen during a runaway bug. This is the one accepted exception to "no log line from a run is ever discarded" in spec section 9.
 * Log retention: Application Insights tables keep data for 90 days at no charge. Keep the default. Lowering it saves nothing, because the first 31 days are included in the ingestion price. Raising it adds a cost.
 * Storage account: the only unavoidable charge. Azure Functions cannot run without a storage account, and the timer trigger keeps its schedule state there. Azure has no permanent free tier for storage. Estimated at well under £1 per month, from a tiny amount of stored data and the background transactions of the Functions host. This figure is an estimate, not checked against the storage pricing page.
 
@@ -501,11 +559,14 @@ Effectively free, but not literally zero.
 
 ### 8.4 CI/CD
 
-A single GitHub Actions workflow in `.github/workflows/`:
+A single GitHub Actions workflow in `.github/workflows/`. It runs on `windows-latest`, to match the Function App's operating system (section 8.1), and installs .NET `10.0.x` with `actions/setup-dotnet`.
 
 1. Trigger on push to `main`, and on pull request.
 2. Restore, build, and run all tests.
 3. On `main` only, and only when tests pass, publish and deploy to the Function App.
-4. Authenticate with an Azure publish profile held in a repository secret.
+4. Sign in with `azure/login` using OpenID Connect, then deploy with `Azure/functions-action`. The workflow needs the `id-token: write` permission. This is Microsoft's recommended method (checked on 2026-09-30).
+5. The managed identity's client id, tenant id and subscription id are GitHub repository variables. They identify the identity; they are not secrets.
 
 Tests gate the deployment. A red build does not reach Azure.
+
+**Rollback.** Revert the bad commit on `main`. The workflow then tests and deploys the previous version. No other tooling is needed.
