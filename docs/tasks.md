@@ -72,32 +72,34 @@ Goal: the booking rules in spec section 6 are implemented and covered by their t
   - Depends on: T3
   - Done when:
     - `BookingOutcome`, `BookingResult` and the `BookingRequest` record exist as in plan section 3.1.
-    - `BookingResult` says whether a failure was transient or definitive.
+    - `BookingOutcome` includes `Unconfirmed`, and `BookingResult` has the three statuses `Succeeded`, `Rejected` and `Unknown`.
     - `BookingAttempt` and `BookingSummary` can express per-hour outcomes, counts and an overall verdict.
     - The solution builds.
   - Verify: `dotnet build PicktimeAutomation/PicktimeAutomation.AzureFunctions.slnx`
   - Notes: Moved before the API client work, because T6 returns `BookingResult`.
 
 - [ ] **T5 — Read availability**
-  - Refs: spec 4.1 defect 2, spec 5.1, plan 3, plan 7.6, tests 19–21
+  - Refs: spec 4.1 defect 2, spec 5.1, plan 3, plan 4.2, plan 7.6, tests 19–21, 25
   - Depends on: T3
   - Done when:
     - `IPicktimeApiService.GetAvailableSlotsAsync` exists, with the slots response model, as in plan section 3.
     - It takes a `CancellationToken`.
     - The request carries every query parameter in spec section 5.1.
-    - Tests 19–21 pass.
+    - A malformed slots response is reported as a failed read, not thrown.
+    - Tests 19–21 and 25 pass.
   - Verify: the standard test command
   - Notes:
 
 - [ ] **T6 — Fix the booking request and parse its response**
-  - Refs: spec 4.1 defect 1, spec 5.2, plan 2, plan 3, plan 3.1, plan 7.6, tests 22–25
+  - Refs: spec 4.1 defect 1, spec 5.2, plan 2, plan 3, plan 3.1, plan 4.1, plan 7.4, plan 7.6, tests 22–24, 30
   - Depends on: T4
   - Done when:
     - `start_date_time` comes from `DateTimeOfBooking`.
     - The wire payload matches spec section 5.2 exactly. `alt_number_Ext` uses an explicit JSON property name. `booking_addnl_fields` is a constant, with no setting.
-    - `CreateBookingAsync` returns a parsed `BookingResult`, and takes a `CancellationToken`.
+    - `CreateBookingAsync` returns a `BookingResult`, and takes a `CancellationToken`.
+    - The result is `Succeeded`, `Rejected` or `Unknown`, classified as in plan section 4.1.
     - Response parsing has moved out of `PicktimeBookingService`. `BookingSuccessfulResponse` is kept.
-    - Tests 22–25 pass. Test 22 is the regression test for defect 1.
+    - Tests 22–24 and 30 pass. Test 22 is the regression test for defect 1.
   - Verify: the standard test command
   - Notes:
 
@@ -186,11 +188,13 @@ Goal: failures are handled safely, and every run can be understood from its logs
   - Verify: the standard test command, and a review of the HTTP client registration
   - Notes:
 
-- [ ] **T14 — Handle an ambiguous booking outcome**
-  - Refs: spec 9, plan 4.1, plan 7.4, tests 12–14
+- [ ] **T14 — Handle an unknown booking result**
+  - Refs: spec 6.4, spec 6.5, spec 9, plan 4.1, plan 7.4, tests 12–14
   - Depends on: T13
   - Done when:
-    - An ambiguous `POST` failure re-reads availability instead of resending.
+    - An `Unknown` result re-reads availability for that target and hour, instead of resending.
+    - The hour ends as `Unconfirmed` when it has gone, or when a second attempt is also `Unknown`. It is logged as a warning.
+    - After an `Unknown` result, no other target is tried for that hour.
     - Tests 12–14 pass.
   - Verify: the standard test command
   - Notes: These tests prevent a duplicate booking. They are the most important tests in the suite.
@@ -199,13 +203,15 @@ Goal: failures are handled safely, and every run can be understood from its logs
   - Refs: spec 3 goal 5, spec 4.1 defect 9, spec 5.2, spec 5.3, spec 6.2, spec 6.3, plan 4.2, plan 5.1, plan 5.2, plan 5.3
   - Depends on: T8
   - Done when:
-    - Application Insights sampling is off in `host.json`.
+    - The worker sends logs to Application Insights through OpenTelemetry, set up as in plan section 5.2: the two packages, `Program.cs`, `host.json` and `appsettings.json`.
+    - The exporter is registered only when `APPLICATIONINSIGHTS_CONNECTION_STRING` is set, and `func start` works without it.
+    - Host sampling is off in `host.json`, and no sampling is configured in the worker.
     - Each run logs the start line from spec section 6.2, including the season gate result. A skipped run logs why.
     - Each run logs availability per target, and each attempt with its outcome, booking id and API message.
     - `booking_email_confirmation` is logged per booking.
     - Logging is structured, with named placeholders.
     - Each run writes one structured summary event, as in plan section 5.3. `BookingLoggingExtensions` is the only place it is written.
-    - A malformed response body is logged at debug level.
+    - A malformed response body is logged at Warning level, cut to its first 1 KB.
     - HTTP 401 or 403 logs an error that names authentication as the cause.
     - The `scantoken` is never logged. Checked by review.
   - Verify: the standard test command, then one local run through the HTTP trigger with the log output checked
@@ -256,10 +262,13 @@ Goal: the automation is proved in production and left running.
   - Notes:
 
 - [ ] **T20 — Pin the 90-day query (manual)**
-  - Refs: spec 9, plan 5.4, plan 8.3
-  - Depends on: T18
-  - Done when: the plan section 5.4 query is pinned to an Azure dashboard.
-  - Verify: open the dashboard and see the recent runs
+  - Refs: spec 9, plan 5.2, plan 5.4, plan 8.3
+  - Depends on: T19
+  - Done when:
+    - The plan section 5.4 query returns the T19 run with every column filled. This proves that named placeholders reach `customDimensions` and that nothing was sampled out.
+    - The query is pinned to an Azure dashboard.
+    - It is recorded whether the Invocations view shows data with OpenTelemetry enabled (plan section 5.2).
+  - Verify: open the dashboard and see the T19 run with no empty columns
   - Notes:
 
 - [ ] **T21 — Check one unattended scheduled run (manual)**

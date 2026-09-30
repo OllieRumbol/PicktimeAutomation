@@ -303,6 +303,8 @@ for each hour in (17, 18, 19):
             book it
             if the booking succeeded:
                 record success, move to the next hour
+            else if the result is unknown:
+                follow "Unknown booking results" below, then move to the next hour
             else:
                 record the failure, try the next target
     if no target was booked for this hour:
@@ -313,11 +315,21 @@ log a summary of all three hours
 
 Notes:
 
-* Availability is read once per target per run, not once per hour. That is 2 reads and up to 3 writes, so about 5 HTTP calls per run.
+* Availability is read once per target per run, not once per hour. That is 2 reads and up to 3 writes, so about 5 HTTP calls per run. The only extra read is after an unknown booking result, below.
 * Availability is read before any booking is made. A slot that Picktime reports as free can still be taken by another archer in the seconds between the read and the write, so a booking failure is expected behaviour and must fall through to the next target rather than abort the run.
 * The target list is configuration. Adding the other six target ids later extends the fallback chain with no code change.
 
 **If an availability read fails**, treat that target as having no free hours, log a warning naming the target, and carry on. One unreachable target must not stop the other from being used. If every availability read fails, every hour records `NoAvailability` and the run summary says so.
+
+**Unknown booking results.** Sometimes Picktime gives no clear answer to a booking request, for example no response at all. The booking may or may not exist. Then:
+
+1. Read availability again for that target and hour.
+2. If the hour has gone, record `Unconfirmed`. Do not try another target.
+3. If the hour is still free, the booking did not take. Try the same target once more.
+4. If that attempt is also unknown, record `Unconfirmed`. Make no further attempts on any target.
+
+After an unknown result, the automation never books a second target for that hour. Losing an hour is accepted in preference to a possible duplicate.
+
 ### 6.5 Outcome per hour
 
 Each hour ends in exactly one of these states, and each is logged:
@@ -327,10 +339,11 @@ Each hour ends in exactly one of these states, and each is logged:
 | `Booked` | A target was booked. The target name and booking id are logged. |
 | `NoAvailability` | No target in the chain had that hour free. |
 | `Failed` | A target was free but every booking attempt was rejected. |
+| `Unconfirmed` | A booking may exist, but Picktime did not confirm it (section 6.4). It is logged as a warning. The Picktime confirmation email shows whether it was booked. |
 
 Each hour is independent. A failure on one hour, of any kind, must never stop the other hours from being attempted.
 
-A run is a success only when all three hours reach `Booked`. Partial success is reported as partial, not as failure.
+A run is a success only when all three hours reach `Booked`. Partial success is reported as partial, not as failure. An `Unconfirmed` hour makes a run partial.
 
 ### 6.6 Double booking
 
@@ -399,7 +412,7 @@ One observation on timing: bookings are made by hand until the automation is dep
 * Target 2b is preferred and 3a is used per hour when 2b is taken.
 * Runs outside the season do nothing, and say so in the logs.
 * No secret or personal detail is in the repository.
-* The automation cannot create a duplicate booking, even when a booking request times out.
+* The automation never holds two bookings for the same hour, on the same target or different targets, even when a booking request times out.
 * All tests pass.
 * Deployment is automated, and a failing test stops a deployment.
 * One real booking has been confirmed on the Picktime site from a run in Azure, and its confirmation email arrived.

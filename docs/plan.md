@@ -107,24 +107,30 @@ The other 23 payload fields from spec section 5.2 do not belong on this model. T
 
 The wire payload serialises `alt_number_Ext` with an explicit JSON property name attribute, because the name does not match C# naming convention.
 
-**`BookingSummary` and `BookingAttempt` need to grow.** They currently carry only `Success` and `ErrorMessage`, which cannot express the three outcomes in spec section 6.5:
+**`BookingSummary` and `BookingAttempt` need to grow.** They currently carry only `Success` and `ErrorMessage`, which cannot express the outcomes in spec section 6.5:
 
 ```csharp
-public enum BookingOutcome { Booked, NoAvailability, Failed }
+public enum BookingOutcome { Booked, NoAvailability, Failed, Unconfirmed }
 
 public sealed class BookingAttempt
 {
     public int Hour { get; init; }
     public BookingOutcome Outcome { get; init; }
-    public string? TargetName { get; init; }   // set when Booked
+    public string? TargetName { get; init; }   // set when Booked or Unconfirmed
     public string? BookingId { get; init; }    // set when Booked
-    public string? ErrorMessage { get; init; } // set when Failed
+    public string? ErrorMessage { get; init; } // set when Failed or Unconfirmed
 }
 ```
 
 `BookingSummary` keeps its list of attempts, and replaces the single `Success` boolean with counts per outcome plus an overall verdict, so a partial result reads as partial, as spec section 6.5 requires.
 
-**`BookingResult`** is the new return type of `CreateBookingAsync`: whether it succeeded, the booking id from `data.id`, the API's `message`, and whether the failure was transient or definitive. The booking service needs that last flag to decide between retrying and falling through to the next target.
+**`BookingResult`** is the new return type of `CreateBookingAsync`. It holds a status, the booking id from `data.id`, and the API's `message`. The status has three values, defined in section 4.1:
+
+```csharp
+public enum BookingResultStatus { Succeeded, Rejected, Unknown }
+```
+
+The booking service uses the status to decide what happens next. `Rejected` falls through to the next target. `Unknown` follows section 4.1 and never falls through.
 
 **`BookingSuccessfulResponse`** in `PicktimeAutomation.Models` already models the success response in spec section 5.2 correctly. Keep it.
 
@@ -178,14 +184,24 @@ So:
 | Endpoint | Retry policy |
 | --- | --- |
 | `GET /ia/slots` | Retry up to 3 times with a short backoff, on network error, timeout or HTTP 5xx |
-| `POST /ia/save/event` | **No automatic retry.** Treat an ambiguous outcome as ambiguous. |
+| `POST /ia/save/event` | **No automatic retry.** An unknown result is handled as below. |
 
-When a booking POST fails ambiguously — a timeout, a dropped connection, or a 5xx with no body — do not resend it. Instead, re-read availability for that target and hour:
+**What makes a booking result `Unknown`.** `CreateBookingAsync` returns `Unknown` for any of these, because the booking may exist:
 
-* The hour is **gone** from availability, so the booking almost certainly succeeded. Record `Booked` with a warning that the booking id is unknown.
-* The hour is **still free**, so the booking did not take. It is now safe to attempt it once more.
+* A timeout, or a dropped connection.
+* Any HTTP 5xx, with or without a body.
+* An HTTP 2xx whose body cannot be parsed.
 
-That turns an unsafe retry into a safe one, using the availability endpoint we already have.
+It returns `Succeeded` for a parsed `status: true`, and `Rejected` for a parsed `status: false` or an HTTP 4xx. HTTP 401 and 403 are also authentication failures (section 4.2).
+
+**Handling an `Unknown` result.** This is the rule in spec section 6.4. Do not resend the request. Instead:
+
+1. Re-read availability for that target and hour.
+2. The hour has **gone**: record `Unconfirmed`, with a warning. Stop for this hour. The hour may have gone to our booking or to another archer's, and the two cannot be told apart, so no other target is tried.
+3. The hour is **still free**: the booking did not take, so one more attempt on the same target is safe.
+4. That attempt is also `Unknown`: record `Unconfirmed`, with a warning. Make no further attempts for this hour, on any target.
+
+That turns an unsafe retry into a safe one, using the availability endpoint we already have. It never holds two bookings for the same hour, as spec section 9 requires. The cost is that, rarely, an hour that 3a could have filled is lost.
 
 ### 4.2 Everything else
 
@@ -195,7 +211,8 @@ That turns an unsafe retry into a safe one, using the availability endpoint we a
 | --- | --- |
 | HTTP 401 or 403, or a token rejection message | No retry. Log at error level, naming authentication as the cause. This meets spec section 5.3. |
 | `status: false` — slot taken | No retry. Fall through to the next target, as spec section 6.4 requires. |
-| Malformed or empty response body | No retry. Record `Failed` for that hour, with the raw body logged at debug level. |
+| Malformed or empty body from the booking `POST` | The result is `Unknown`. Handle as section 4.1. Log the raw body at Warning level, cut to its first 1 KB. |
+| Malformed or empty body from the availability `GET` | The read has failed. Handle as spec section 6.4 requires for a failed read. Log the raw body at Warning level, cut to its first 1 KB. |
 | An availability read fails after retries | Handle as spec section 6.4 requires: the target has no free hours. |
 | An hour throws unexpectedly | Catch, record `Failed`, and continue to the next hour. This meets spec section 6.5. |
 | Invalid or past `bookingDate` on the HTTP trigger | Return HTTP 400 with the reason, and do not call the booking service. This meets spec section 6.7. |
@@ -222,7 +239,18 @@ The limitation is that this channel only reports success. Picktime sends nothing
 
 Application Insights stays within its free allowance. See section 8.3.
 
-**Turn sampling off**, to fix defect 9 in spec section 4.1. Set `samplingSettings.isEnabled` to `false` in `host.json`. Sampling is designed for high volume, and at three runs a week there is nothing to gain from it.
+**How the logs get there.** The Functions host and the .NET worker log separately. Settings in `host.json` do not affect logs from the worker, and every booking log line comes from the worker. So the worker sends its logs directly to Application Insights through OpenTelemetry, as Microsoft's isolated worker guide recommends. Relaying through the host, the default, is not used: it gives no guarantee that named placeholders arrive as `customDimensions`, which the query in section 5.4 depends on.
+
+| Where | Setting |
+| --- | --- |
+| Packages | `Microsoft.Azure.Functions.Worker.OpenTelemetry` and `Azure.Monitor.OpenTelemetry.Exporter` |
+| `Program.cs` | `AddOpenTelemetry().UseFunctionsWorkerDefaults().UseAzureMonitorExporter()`. Register the exporter only when `APPLICATIONINSIGHTS_CONNECTION_STRING` is set, so local runs work without Azure. |
+| `host.json` | `"telemetryMode": "OpenTelemetry"`. Also set `samplingSettings.isEnabled` to `false`, which fixes defect 9 in spec section 4.1 for the host's own logs. |
+| `appsettings.json` | Worker log levels: `Default` at `Information`, `Microsoft` at `Warning`. Worker log levels are set here, not in `host.json`. |
+
+No sampling is configured in the worker. Sampling is designed for high volume, and at three runs a week there is nothing to gain from it. Whether the exporter samples by default was not confirmed, so the first run in Azure is checked: the section 5.4 query must return it with every column filled.
+
+The libraries are free and open source. The logs go to the same Application Insights resource, within the same free allowance (section 8.3), so this choice adds no cost.
 
 Three ways to reach the logs, in increasing order of effort:
 
@@ -231,6 +259,8 @@ Three ways to reach the logs, in increasing order of effort:
 | **Invocations** | Function App → Functions → the function → Invocations | The normal check. A row per run, click through for that run's log lines. |
 | **Log stream** | Function App → Log stream | Watching a manual run live. Nothing is retained. |
 | **Logs (KQL)** | Application Insights → Logs | History, and the pinned dashboard query below. |
+
+After the first run in Azure, confirm that the Invocations view shows data with OpenTelemetry enabled. If it does not, Logs (KQL) becomes the normal check.
 
 ### 5.3 What each run logs
 
@@ -246,8 +276,9 @@ Use structured logging with named placeholders throughout, so values land in `cu
 ```csharp
 logger.LogInformation(
     "Booking run finished. Date={BookingDate} Booked={BookedCount} " +
-    "NoAvailability={NoAvailabilityCount} Failed={FailedCount} Verdict={Verdict}",
-    bookingDate, booked, noAvailability, failed, verdict);
+    "NoAvailability={NoAvailabilityCount} Failed={FailedCount} " +
+    "Unconfirmed={UnconfirmedCount} Verdict={Verdict}",
+    bookingDate, booked, noAvailability, failed, unconfirmed, verdict);
 ```
 
 Never log the `scantoken`.
@@ -264,12 +295,13 @@ traces
          Booked      = toint(customDimensions.BookedCount),
          Unavailable = toint(customDimensions.NoAvailabilityCount),
          Failed      = toint(customDimensions.FailedCount),
+         Unconfirmed = toint(customDimensions.UnconfirmedCount),
          Verdict     = tostring(customDimensions.Verdict)
-| project timestamp, BookingDate, Booked, Unavailable, Failed, Verdict
+| project timestamp, BookingDate, Booked, Unavailable, Failed, Unconfirmed, Verdict
 | order by timestamp desc
 ```
 
-Up to 90 days of runs, with any row that did not book three hours obvious at a glance. The window matches the free retention period in section 8.3. Older runs are not kept. Add `| where Booked < 3` to see only the runs worth investigating.
+Up to 90 days of runs, with any row that did not book three hours obvious at a glance. The window matches the free retention period in section 8.3. Older runs are not kept. Add `| where Booked < 3` to see only the runs worth investigating. For any row with `Unconfirmed` above zero, check the Picktime confirmation emails for that date.
 
 ### 5.5 Residual risk
 
@@ -359,15 +391,16 @@ Each test names the defect it catches.
 | 10 | Both availability reads fail, so every hour records `NoAvailability` and nothing is booked | A blind booking attempt after a failed read |
 | 11 | Two hours booked and one not is reported as partial, not as failure | A mostly-successful run reads as a total failure in the logs |
 
-### 7.4 Ambiguous booking outcomes — section 4.1
+### 7.4 Unknown booking results — section 4.1
 
-The tests that stop a duplicate booking. The most valuable three in the suite, because the defect they prevent cannot be undone once it happens. Drive them with a fake API service that reports an ambiguous failure, then a controlled availability response.
+The tests that stop a duplicate booking. The most valuable in the suite, because the defect they prevent cannot be undone once it happens. Drive tests 12–14 with a fake API service that returns `Unknown`, then a controlled availability response. Test 30 uses a stub `HttpMessageHandler`.
 
 | # | Test | Defect it catches |
 | --- | --- | --- |
-| 12 | A booking times out and the hour has gone from availability, so the outcome is `Booked` and **no second booking is attempted** | A duplicate booking for the same slot |
-| 13 | A booking times out and the hour is still free, so exactly one further attempt is made | Giving up on a slot that was never actually booked |
-| 14 | A booking times out twice, so the outcome is `Failed` and no third attempt is made | An unbounded retry loop against a failing API |
+| 12 | A booking returns `Unknown` and the hour has gone from availability, so the outcome is `Unconfirmed`, **no second booking is attempted, and 3a is not tried** | Two bookings for the same hour |
+| 13 | A booking returns `Unknown` and the hour is still free, so exactly one further attempt is made on the same target | Giving up on a slot that was never actually booked |
+| 14 | A booking returns `Unknown` twice, so the outcome is `Unconfirmed`, no third attempt is made, and 3a is not tried | Falling through to 3a when the first target may be booked, or an unbounded retry loop |
+| 30 | `CreateBookingAsync` returns `Unknown`, not `Rejected`, for a timeout, an HTTP 5xx with and without a body, and an HTTP 2xx with an unreadable body | An uncertain result treated as a rejection, which falls through to 3a |
 
 ### 7.5 The date rule and time zones
 
@@ -391,8 +424,8 @@ Use a stub `HttpMessageHandler`. These are worth writing despite looking like wi
 | 21 | An empty `data` array yields no free hours and is not an error | A fully booked day treated as a fault |
 | 22 | `CreateBookingAsync` posts every field in the spec section 5.2 payload with the exact names — including `alt_number_Ext` and the nested-JSON string in `booking_addnl_fields` — and `start_date_time` taken from `DateTimeOfBooking` | **Regression test for defect 1**, plus the two field-name traps |
 | 23 | A successful response parses as success and captures the booking id from `data.id` | A real booking recorded as a failure |
-| 24 | A `status: false` response parses as a definitive failure and preserves the message | A rejection treated as transient, triggering a pointless retry |
-| 25 | Malformed JSON is reported as a failure, not thrown | An unparseable body crashing the run |
+| 24 | A `status: false` response parses as `Rejected` and preserves the message | A rejection treated as `Unknown`, which blocks the fall-through to 3a |
+| 25 | Malformed JSON in a slots response is reported as a failed read, not thrown | An unparseable body crashing the run |
 | 26 | The `scantoken` header is present on every request | Auth silently missing, so nothing books and the reason is unclear |
 
 Not tested: that the token is never written to a log. Asserting the absence of a value across arbitrary log calls is brittle and proves little. It is a code review point in section 6 instead.
@@ -429,6 +462,7 @@ Required application settings:
 | --- | --- |
 | `FUNCTIONS_WORKER_RUNTIME` | `dotnet-isolated` |
 | `WEBSITE_TIME_ZONE` | `GMT Standard Time` |
+| `APPLICATIONINSIGHTS_CONNECTION_STRING` | Set by Azure when Application Insights is linked to the Function App. The exporter in section 5.2 needs it. |
 
 Plus every setting in section 2.
 
