@@ -5,7 +5,7 @@
 Status: Approved
 Last updated: 2026-09-30
 
-This document is the record of requirements for this project. It says what must be true, not how it is achieved. Each fact is stated once: the plan refers to sections here rather than repeating them. Keep it updated as requirements change.
+This document is the record of requirements for this project. It says what must be true, not how it is achieved. Each fact is stated once. Keep it updated as requirements change.
 
 ---
 
@@ -94,7 +94,7 @@ The repository contains a working skeleton. It compiles and has the right shape.
 
 Base address: `https://www.picktime.com/`
 
-Picktime timestamps are integers in the form `yyyyMMddHHmm`. For example `202609291800` means 18:00 on 29 September 2026. This spec calls that a *Picktime timestamp*.
+Picktime timestamps are integers in the form `yyyyMMddHHmm`. For example `202609291800` means 18:00 on 29 September 2026. This spec calls that a *Picktime timestamp*. Picktime timestamps are in London local time, matching the `timezone` value of `Europe/London` sent with every request.
 
 ### 5.1 Read availability for one target and one day
 
@@ -267,7 +267,7 @@ Two independent things must both use London time:
 1. **The trigger time.** The run starts at 00:05 London time, in both GMT and BST.
 2. **The booking date.** The date is computed from the current London time, not from the host clock, which is UTC.
 
-Fixing only one of the two gives a booking that is a day out. Both must be in place, and both must be covered by tests.
+Fixing only one of the two gives a booking that is a day out. Both must be in place. The booking date is covered by tests. The trigger time depends on how the hosting is configured, so it is checked after deployment.
 
 Every run must log the current UTC time, the current London time and the computed booking date, so a mistake is visible in the first log line.
 
@@ -323,7 +323,7 @@ Notes:
 
 **If an availability read fails**, treat that target as having no free hours, log a warning naming the target, and carry on. One unreachable target must not stop the other from being used. If every availability read fails, every hour records `NoAvailability` and the run summary says so.
 
-**If a read or booking fails because the token is rejected**, the run reports authentication as the cause (section 5.3), not as no availability or a failed booking.
+**If a read or booking fails because the token is rejected**, the run reports authentication as the cause (section 5.3), not as no availability or a failed booking. The run stops there, because every further request would be rejected too. Hours not yet finished record `Failed`, with authentication as the reason.
 
 **Unknown booking results.** Sometimes Picktime gives no clear answer to a booking request, for example no response at all. The booking may or may not exist. Then:
 
@@ -345,11 +345,11 @@ Each hour ends in exactly one of these states, and each is logged:
 | `Failed` | A target was free but every booking attempt was rejected. |
 | `Unconfirmed` | A booking may exist, but Picktime did not confirm it (section 6.4). It is logged as a warning. The Picktime confirmation email shows whether it was booked. |
 
-Each hour is independent. A failure on one hour, of any kind, must never stop the other hours from being attempted.
+Each hour is independent. A failure on one hour must never stop the other hours from being attempted. The one exception is a rejected token, which stops the run (section 6.4).
 
-A run is a success only when all three hours reach `Booked`. Partial success is reported as partial, not as failure. An `Unconfirmed` hour makes a run partial.
+A run is a success only when all configured hours reach `Booked`. Partial success is reported as partial, not as failure. An `Unconfirmed` hour makes a run partial.
 
-A run outside the season is reported as skipped, and appears in the run record like any other run.
+A run outside the season is reported as skipped, and appears in the run record like any other run. So does a late run that books nothing (section 6.1), and a run that fails with an unexpected error.
 
 ### 6.6 Double booking
 
@@ -419,11 +419,11 @@ One observation on timing: bookings are made by hand until the automation is dep
 * Target 2b is preferred and 3a is used per hour when 2b is taken.
 * Runs outside the season do nothing, and say so in the logs.
 * No secret is in the repository's current files, and no personal detail is in the source code.
-* The automation never holds two bookings for the same hour, on the same target or different targets, even when a booking request times out.
+* The automation never holds two bookings for the same hour, on the same target or different targets, even when a booking request times out. The one accepted exception is a manual run started at the same time as a scheduled run. The manual trigger is not used around 00:05 on a run day.
 * All tests pass.
 * Deployment is automated, and a failing test stops a deployment.
 * One real booking has been confirmed on the Picktime site from a run in Azure, and its confirmation email arrived.
-* No log line from a run is ever discarded.
+* No log line from a run is ever discarded, except when a daily cap on log volume is reached, which only a runaway logging fault can cause.
 * Every run in the last 90 days can be reviewed in one place.
 * The logs make it clear, without reading the code, what any given run did.
 * `README.md` explains what the project does, how to run it locally, and which settings it needs.

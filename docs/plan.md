@@ -41,6 +41,20 @@ No secret or personal detail stays in source. Local development uses `local.sett
 
 Bind these with the options pattern and validate them at start-up, so a missing token fails immediately and loudly rather than at 00:05. `BookingSchedule` is the one exception. See below.
 
+**Validation rules.** Start-up stops with a message that names the setting if any rule fails. Test 35 covers each rule.
+
+| Setting | Rule |
+| --- | --- |
+| `Picktime:BaseUrl` | An absolute `https` URL |
+| `Picktime:ScanToken`, `Picktime:AccountId`, `Picktime:LocationId` | Not empty |
+| `Archer:FirstName`, `Archer:LastName` | Not empty |
+| `Archer:Email` | Not empty, and contains `@` |
+| `Booking:DaysAhead` | A whole number from 1 to 14 |
+| `Booking:Hours` | At least one hour. Each is a whole number from 0 to 23, with no duplicates. |
+| `Booking:Targets` | At least one target. Each has a non-empty `Name` and `ResourceId`, and names are unique. |
+| `Booking:SeasonStart`, `Booking:SeasonEnd` | Valid `MM-dd` dates. The season may wrap the year end, as 1 October to 31 March does. |
+| `BookingSchedule` | Not empty (below) |
+
 The example values for days ahead, hours, targets and season come from spec sections 6.1 and 6.3. `DaysAhead` and the season dates are settings even though spec section 3, goal 4 does not require it: they cost nothing, and Picktime's release window or the club's season could change.
 
 There is deliberately no time zone setting. The club is in London, so `Europe/London` is one constant in `LondonClock` (section 3), not something to configure.
@@ -100,6 +114,8 @@ Two changes of note against the current code:
 1. `CreateBookingAsync` returns a parsed result rather than a raw `string`. Response parsing belongs with the client that knows the wire format, not in the booking rules. This moves `ParseBookingApiResponse` out of `PicktimeBookingService`.
 2. Both methods take a `CancellationToken`, which the Functions host supplies.
 
+**How `GetAvailableSlotsAsync` reports a failed read.** An empty list means the target is fully booked. A read that fails, after its retries, throws `PicktimeReadException`. That covers a network error, a timeout, an HTTP 5xx, or a body that cannot be parsed. So a failed read can never be mistaken for a fully booked day, as spec section 6.4 requires. The booking service catches the exception, logs a warning naming the target, treats the target as having no free hours, and adds the target's name to `BookingSummary.FailedReads` (section 3.1). This matches how an authentication failure is reported, with `PicktimeAuthenticationException`.
+
 `IPicktimeBookingService` keeps one entry point. The booking date is optional:
 
 ```csharp
@@ -112,16 +128,16 @@ When no date is supplied, the service computes it from the injected `TimeProvide
 
 That placement is deliberate. If the trigger computed the date, the date rule — the thing most likely to be wrong, per spec section 6.2 — would live in an Azure Functions entry point, which is awkward to unit test. Keeping it inside the service means both triggers are thin adapters with no logic of their own, and the rule is covered by ordinary unit tests.
 
-**Service registration** lives in one extension method, `AddPicktimeServices(IServiceCollection)`, which `Program.cs` calls. This includes the options, the services and both HTTP clients with their retry policies. Tests build the real registrations from the same method, so test 33 checks the configuration that actually runs (section 7.2, rule 7).
+**Service registration** lives in one extension method, `AddPicktimeServices(IServiceCollection)`, in the `PicktimeAutomation.Services` project, which `Program.cs` calls. `LondonClock` is in the same project, so `PicktimeAutomation.ServicesTests` can test both. This includes the options, the services and both HTTP clients with their retry policies. Tests build the real registrations from the same method, so test 33 checks the configuration that actually runs (section 7.2, rule 7).
 
 **Host setup and HTTP model.** `Program.cs` uses `FunctionsApplication.CreateBuilder(args)` with `ConfigureFunctionsWebApplication()`, which is ASP.NET Core integration, with the package `Microsoft.Azure.Functions.Worker.Extensions.Http.AspNetCore`. It replaces the current `new HostBuilder()` with `ConfigureFunctionsWorkerDefaults()`, for two reasons:
 
 1. `CreateBuilder` loads `appsettings.json` automatically. With `new HostBuilder()` it is not loaded, so the worker log levels in section 5.2 would be silently ignored.
 2. The HTTP trigger takes an ASP.NET Core `HttpRequest`, which tests 27–29 build from a plain `DefaultHttpContext`. The built-in `HttpRequestData` model needs a mocked `FunctionContext` instead.
 
-**The timer trigger** checks `TimerInfo.IsPastDue`. If it is set, the run was missed and has started late, so the trigger logs a warning and does not call the booking service, as spec section 6.1 requires. Working out the date from the missed occurrence's scheduled time was rejected: it needs the timer's schedule status, which is fiddly and hard to test. Skipping is safe: the worst case is a warning and a manual catch-up, never a wrong booking. A run that is only a little late on the same day is also skipped.
+**The timer trigger** logs `TimerInfo.IsPastDue` and the schedule's last and next occurrence on every run, so a wrong value is visible from the first scheduled run. If `IsPastDue` is set, the run was missed and has started late, so the trigger does not call the booking service, as spec section 6.1 requires. It logs a warning, and writes the summary event with the `Missed` verdict (section 3.1). Working out the date from the missed occurrence's scheduled time was rejected: it needs the timer's schedule status, which is fiddly and hard to test. Skipping is safe: the worst case is a warning and a manual catch-up, never a wrong booking. A run that is only a little late on the same day is also skipped.
 
-**The HTTP trigger** reads `bookingDate` from the query string only, as spec section 6.7 requires. It checks the date before calling the booking service. It returns the `BookingSummary` as JSON with HTTP 200, HTTP 400 for an invalid or past date, and HTTP 500 for an unexpected error (section 4.2).
+**The HTTP trigger** reads `bookingDate` from the query string only, as spec section 6.7 requires. It checks the date before calling the booking service. It returns the `BookingSummary` as JSON with HTTP 200, HTTP 400 for an invalid or past date, and HTTP 500 for an unexpected error (section 4.2). On an unexpected error, both triggers write the summary event with the `Error` verdict before they return.
 
 **`LondonClock`** is one small injected class with `DateOnly Today()`. It is built on the injected `TimeProvider` and the constant `Europe/London`, resolved with `TimeZoneInfo.FindSystemTimeZoneById`. The booking service uses it for the default booking date, and the HTTP trigger uses it for the past-date check. So the date rule stays in one place (section 7.2, rule 3), and both uses are testable with `FakeTimeProvider`.
 
@@ -152,21 +168,23 @@ public sealed class BookingAttempt
 }
 ```
 
-`BookingSummary` holds the booking date, its list of attempts, counts per outcome, and a verdict. It replaces the single `Success` boolean, so a partial result reads as partial, as spec section 6.5 requires.
+`BookingSummary` holds the booking date, its list of attempts, counts per outcome, `FailedReads` (the names of targets whose availability read failed), and a verdict. It replaces the single `Success` boolean, so a partial result reads as partial, as spec section 6.5 requires.
 
 ```csharp
-public enum RunVerdict { Success, Partial, Failure, Skipped, AuthenticationFailed }
+public enum RunVerdict { Success, Partial, Failure, Skipped, AuthenticationFailed, Missed, Error }
 ```
 
 | Verdict | When |
 | --- | --- |
-| `AuthenticationFailed` | Any call raised `PicktimeAuthenticationException` (section 4.2). This overrides every other verdict, as spec section 6.4 requires. The hours still record what happened to them. |
-| `Success` | All three hours are `Booked`. |
-| `Partial` | At least one hour is `Booked` or `Unconfirmed`, but not all three are `Booked`. |
+| `AuthenticationFailed` | Any call raised `PicktimeAuthenticationException` (section 4.2). This overrides every other verdict, as spec section 6.4 requires. The run stops. Hours already finished keep their outcome. Hours not yet finished record `Failed`, with authentication as the reason. |
+| `Success` | All configured hours are `Booked`. |
+| `Partial` | At least one hour is `Booked` or `Unconfirmed`, but not all configured hours are `Booked`. |
 | `Failure` | No hour is `Booked` or `Unconfirmed`. |
 | `Skipped` | The booking date is outside the season. No hours are attempted. |
+| `Missed` | A late timer run (section 3). The booking service is not called, and the booking date is left empty. |
+| `Error` | A trigger caught an unexpected exception (section 4.2). The booking date is filled in when it is known. |
 
-A skipped run still returns a `BookingSummary`, with zero counts, and still writes the summary event in section 5.3. So it appears in the section 5.4 query like any other run, as spec section 6.5 requires. The HTTP trigger returns it with HTTP 200.
+A skipped run still returns a `BookingSummary`, with zero counts, and still writes the summary event in section 5.3. So it appears in the section 5.4 query like any other run, as spec section 6.5 requires. The HTTP trigger returns it with HTTP 200. `Missed` and `Error` runs also write the summary event, so every run appears in the query, whatever its outcome.
 
 **`BookingResult`** is the new return type of `CreateBookingAsync`. It holds a status, the booking id from `data.id`, the API's `message`, and `EmailConfirmationSent`, read from `booking_email_confirmation`. The status has three values, defined in section 4.1:
 
@@ -202,7 +220,7 @@ Spec section 6.2 requires both the trigger time and the booking date to use Lond
 1. **The trigger time.** Set the Function App setting `WEBSITE_TIME_ZONE` to `GMT Standard Time`, so the `BookingSchedule` expression is evaluated in London time. Despite its name, that Windows id means UK time including British Summer Time. It is not fixed to GMT. A Windows plan is used for this reason — see section 8.1.
 2. **The date arithmetic.** Compute the booking date from the current London time, not from `DateTime.Today`, which is UTC on the host. `LondonClock` (section 3) does this with `TimeZoneInfo.FindSystemTimeZoneById("Europe/London")`, which .NET resolves on both Linux and Windows.
 
-Both are covered by the tests in section 7.5.
+The date arithmetic is covered by the tests in section 7.5. The trigger time depends on the `WEBSITE_TIME_ZONE` setting, so it cannot be unit tested. It is checked after deployment instead (section 8.1).
 
 ### 3.4 Execution order
 
@@ -227,7 +245,7 @@ So:
 
 | Endpoint | Retry policy |
 | --- | --- |
-| `GET /ia/slots` | Retry up to 3 times with a short backoff, on network error, timeout or HTTP 5xx |
+| `GET /ia/slots` | Retry up to 3 times on network error, timeout or HTTP 5xx, with the standard resilience handler's exponential backoff, which starts at 2 seconds |
 | `POST /ia/save/event` | **No automatic retry.** An unknown result is handled as below. |
 
 **What makes a booking result `Unknown`.** `CreateBookingAsync` returns `Unknown` for any of these, because the booking may exist:
@@ -238,12 +256,11 @@ So:
 
 It returns `Succeeded` for a parsed `status: true`, and `Rejected` for a parsed `status: false` or an HTTP 4xx. HTTP 401 and 403 are also authentication failures (section 4.2).
 
-**Handling an `Unknown` result.** This is the rule in spec section 6.4. Do not resend the request. Instead:
+**Handling an `Unknown` result** follows the four steps in spec section 6.4. The request is never resent. Design details:
 
-1. Re-read availability for that target and hour.
-2. The hour has **gone**: record `Unconfirmed`, with a warning. Stop for this hour. The hour may have gone to our booking or to another archer's, and the two cannot be told apart, so no other target is tried.
-3. The hour is **still free**: the booking did not take, so one more attempt on the same target is safe.
-4. That attempt is also `Unknown`: record `Unconfirmed`, with a warning. Make no further attempts for this hour, on any target.
+* The re-read is a call to `GetAvailableSlotsAsync` for that target and the booking date, checked for that hour.
+* Both `Unconfirmed` cases log a warning.
+* If the re-read itself fails, with `PicktimeReadException`, the hour records `Unconfirmed`. The booking may exist, so no other target is tried.
 
 That turns an unsafe retry into a safe one, using the availability endpoint we already have. It never holds two bookings for the same hour, as spec section 9 requires. The cost is that, rarely, an hour that 3a could have filled is lost.
 
@@ -253,7 +270,7 @@ That turns an unsafe retry into a safe one, using the availability endpoint we a
 | --- | --- | --- |
 | Booking `POST` | 20 seconds | About 5 times the measured 3.64 seconds, so a slow booking that succeeds is not wrongly marked `Unknown`. Short enough that a hung request does not stall the run. `HttpClient`'s default of 100 seconds is not used. |
 | Availability `GET` | The standard resilience handler defaults: 10 seconds per attempt, 30 seconds in total | Reads are quick and safe to repeat. The defaults suit them, so nothing is configured. |
-| Whole run | `functionTimeout` of 10 minutes in `host.json` | The Consumption plan defaults to 5 minutes, with a maximum of 10 (checked on 2026-09-30). Worst case, with every call timing out, is 30 seconds of reads plus, for each of 3 hours, two attempts and two re-reads of 100 seconds in total: about 5.5 minutes. 10 minutes leaves room for a cold start. |
+| Whole run | `functionTimeout` of 10 minutes in `host.json` | The Consumption plan defaults to 5 minutes, with a maximum of 10 (checked on 2026-09-30). Worst case, with every call timing out, is 30 seconds of reads, plus, for each of 3 hours, two attempts and one re-read (70 seconds): about 4 minutes. 10 minutes leaves room for a cold start. |
 
 An HTTP-triggered function must respond within 230 seconds, whatever `functionTimeout` says. In the worst case above, a manual run loses its HTTP response, but the run itself continues to the end and logs as normal.
 
@@ -263,16 +280,18 @@ An HTTP-triggered function must respond within 230 seconds, whatever `functionTi
 
 | Situation | Behaviour |
 | --- | --- |
-| HTTP 401 or 403, or a token rejection message | The API client throws `PicktimeAuthenticationException`, from either call, with no retry. The booking service catches it and sets the `AuthenticationFailed` verdict (section 3.1). Log at error level, naming authentication as the cause. This meets spec sections 5.3 and 6.4. |
+| HTTP 401 or 403, or a token rejection message | The API client throws `PicktimeAuthenticationException`, from either call, with no retry. The booking service catches it, stops the run, and sets the `AuthenticationFailed` verdict. Hours not yet finished record `Failed`, with authentication as the reason (section 3.1). Log at error level, naming authentication as the cause. This meets spec sections 5.3 and 6.4. |
 | `status: false` — slot taken | No retry. Fall through to the next target, as spec section 6.4 requires. |
 | Malformed or empty body from the booking `POST` | The result is `Unknown`. Handle as section 4.1. Log the raw body at Warning level, cut to its first 1 KB. |
-| Malformed or empty body from the availability `GET` | The read has failed. Handle as spec section 6.4 requires for a failed read. Log the raw body at Warning level, cut to its first 1 KB. |
-| An availability read fails after retries | Handle as spec section 6.4 requires: the target has no free hours. |
+| Malformed or empty body from the availability `GET` | The read has failed: throw `PicktimeReadException` (section 3). Log the raw body at Warning level, cut to its first 1 KB. |
+| An availability read fails after retries | The API client throws `PicktimeReadException`. The booking service handles it as in section 3, which meets spec section 6.4. |
 | An hour throws unexpectedly | Catch, record `Failed`, and continue to the next hour. This meets spec section 6.5. |
 | Invalid or past `bookingDate` on the HTTP trigger | Return HTTP 400 with the reason, and do not call the booking service. This meets spec section 6.7. |
 | Unexpected error on the HTTP trigger | Log the exception, and return HTTP 500 with a short message: "The booking run failed. See the logs." No stack trace or internal detail is returned. This meets spec section 6.7. |
 
-**Accepted risk: a manual run at the same time as a scheduled run.** Two runs in parallel could both see an hour as free and both book it, which spec section 9 forbids. Guarding against it would need a lock shared between runs. It is accepted instead, because only one person uses the manual trigger. Rule: do not run the manual trigger around 00:05 on a run day.
+**Accepted risk: a manual run at the same time as a scheduled run.** Two runs in parallel could both see an hour as free and both book it. Guarding against it would need a lock shared between runs. It is accepted instead, because only one person uses the manual trigger. Spec section 9 records this as the one accepted exception, with its rule: do not run the manual trigger around 00:05 on a run day.
+
+**Raw response bodies in logs** may contain the archer's name or email. This is accepted, because both are already public by the owner's choice (section 6).
 
 Retries on the `GET` use the standard `Microsoft.Extensions.Http.Resilience` handler. Because the policy differs per endpoint, either register two named clients, or register the handler only for the availability path. Whichever is chosen, it must be impossible to accidentally pick up an automatic retry on the booking POST.
 
@@ -324,9 +343,9 @@ After the first run in Azure, confirm that the Invocations view shows data with 
 1. **Start** — the times and booking date required by spec section 6.2, and the season gate result required by spec section 6.3.
 2. **Availability** — the free hours found for each target.
 3. **Each attempt** — hour, target name, outcome, the booking id on success, and `booking_email_confirmation`.
-4. **Summary** — one event, described below.
+4. **Summary** — one event, described below. It is written for every run, whatever the outcome: by the booking service for a normal or skipped run, and by the triggers for a `Missed` or `Error` run (section 3.1). So no run is silent, as spec section 5.3 requires.
 
-Use structured logging with named placeholders throughout, so values land in `customDimensions` and are queryable. Keep `BookingLoggingExtensions` as the single place summaries are written.
+Use structured logging with named placeholders throughout, so values land in `customDimensions` and are queryable. Keep `BookingLoggingExtensions` as the single place summaries are written. The triggers call it too.
 
 **The summary is one event with named properties**, not a sentence of interpolated text. That is what makes the dashboard query below possible:
 
@@ -334,8 +353,8 @@ Use structured logging with named placeholders throughout, so values land in `cu
 logger.LogInformation(
     "Booking run finished. Date={BookingDate} Booked={BookedCount} " +
     "NoAvailability={NoAvailabilityCount} Failed={FailedCount} " +
-    "Unconfirmed={UnconfirmedCount} Verdict={Verdict}",
-    bookingDate, booked, noAvailability, failed, unconfirmed, verdict);
+    "Unconfirmed={UnconfirmedCount} FailedReads={FailedReadCount} Verdict={Verdict}",
+    bookingDate, booked, noAvailability, failed, unconfirmed, failedReads, verdict);
 ```
 
 Never log the `scantoken`.
@@ -353,12 +372,13 @@ traces
          Unavailable = toint(customDimensions.NoAvailabilityCount),
          Failed      = toint(customDimensions.FailedCount),
          Unconfirmed = toint(customDimensions.UnconfirmedCount),
+         FailedReads = toint(customDimensions.FailedReadCount),
          Verdict     = tostring(customDimensions.Verdict)
-| project timestamp, BookingDate, Booked, Unavailable, Failed, Unconfirmed, Verdict
+| project timestamp, BookingDate, Booked, Unavailable, Failed, Unconfirmed, FailedReads, Verdict
 | order by timestamp desc
 ```
 
-Up to 90 days of runs, with any row that did not book three hours obvious at a glance. The window matches the free retention period in section 8.3. Older runs are not kept. Add `| where Booked < 3` to see only the runs worth investigating. For any row with `Unconfirmed` above zero, check the Picktime confirmation emails for that date.
+Up to 90 days of runs, with any row that did not book every configured hour obvious at a glance. The window matches the free retention period in section 8.3. Older runs are not kept. Add `| where Verdict != "Success"` to see only the runs worth investigating. A `FailedReads` value above zero means Picktime could not be read, not that the day was full. For any row with `Unconfirmed` above zero, check the Picktime confirmation emails for that date.
 
 ### 5.5 Residual risk
 
@@ -434,9 +454,9 @@ The highest-value group. These cover the logic that decides what gets booked, dr
 | 7 | A booking date outside the season makes no API calls at all | Out-of-season runs hammer the API, or worse, book something |
 | 8 | Season boundaries: 1 October and 31 March inside; 30 September and 1 April outside | An off-by-one that loses the first or last night of the season |
 | 9 | The availability read for 2b fails, so 2b is treated as full and all three hours book on 3a | A single failed read costs the whole run |
-| 10 | Both availability reads fail, so every hour records `NoAvailability` and nothing is booked | A blind booking attempt after a failed read |
+| 10 | Both availability reads fail, so every hour records `NoAvailability`, nothing is booked, and `FailedReads` lists both targets | A blind booking attempt after a failed read, or a failed read reported as a fully booked day |
 | 11 | Two hours booked and one not is reported as partial, not as failure | A mostly-successful run reads as a total failure in the logs |
-| 31 | An availability read raises `PicktimeAuthenticationException`, so the verdict is `AuthenticationFailed` and no booking is attempted | A rejected token looks like a fully booked night |
+| 31 | An availability read raises `PicktimeAuthenticationException`, so the run stops: no booking is attempted, every hour records `Failed` with authentication as the reason, and the verdict is `AuthenticationFailed` | A rejected token looks like a fully booked night |
 
 ### 7.4 Unknown booking results — section 4.1
 
@@ -472,10 +492,10 @@ Use a stub `HttpMessageHandler`. These are worth writing despite looking like wi
 | 22 | `CreateBookingAsync` posts every field in the spec section 5.2 payload with the exact names — including `alt_number_Ext` and the nested-JSON string in `booking_addnl_fields` — and `start_date_time` taken from `DateTimeOfBooking` | **Regression test for defect 1**, plus the two field-name traps |
 | 23 | A successful response parses as success and captures the booking id from `data.id` | A real booking recorded as a failure |
 | 24 | A `status: false` response parses as `Rejected` and preserves the message | A rejection treated as `Unknown`, which blocks the fall-through to 3a |
-| 25 | Malformed JSON in a slots response is reported as a failed read, not thrown | An unparseable body crashing the run |
+| 25 | Malformed JSON in a slots response raises `PicktimeReadException`. It is not returned as an empty list, and no other exception escapes. | A failed read mistaken for a fully booked day, or an unparseable body crashing the run |
 | 26 | The `scantoken` header is present on every request | Auth silently missing, so nothing books and the reason is unclear |
 | 32 | An HTTP 401 or 403 from either call raises `PicktimeAuthenticationException`, and the request is not retried | A token rejection treated as a normal failure, or retried |
-| 33 | Built from the real `AddPicktimeServices` registration, with a stub handler that returns HTTP 503: the booking `POST` reaches the handler exactly once, and the availability `GET` reaches it 4 times (the first try plus 3 retries) | A retry policy added to the booking client, which can book the same slot twice |
+| 33 | Built from the real `AddPicktimeServices` registration, with a stub handler. With HTTP 503: the booking `POST` reaches the handler exactly once, and the availability `GET` reaches it 4 times (the first try plus 3 retries). With HTTP 401: the availability `GET` reaches it exactly once. The test sets the retry backoff to zero, so it runs quickly; it checks the number of calls, not the timing. | A retry policy added to the booking client, which can book the same slot twice, or one that retries a rejected token |
 
 Not tested: that the token is never written to a log. Asserting the absence of a value across arbitrary log calls is brittle and proves little. It is a code review point in section 6 instead.
 
@@ -485,10 +505,16 @@ Four tests, deliberately. Both triggers are thin adapters. The only logic is the
 
 | # | Test | Defect it catches |
 | --- | --- | --- |
-| 27 | An exception from the booking service is caught and logged by both triggers, so the Function does not crash the host, and the HTTP trigger returns 500 with no internal detail | A thrown exception taking down the host and losing the log record of why, or leaking a stack trace to the caller |
+| 27 | An exception from the booking service is caught and logged by both triggers, so the Function does not crash the host. Both write the summary event with the `Error` verdict, and the HTTP trigger returns 500 with no internal detail. | A thrown exception taking down the host and losing the log record of why, a crashed run missing from the run record, or a stack trace leaked to the caller |
 | 28 | The HTTP trigger passes a supplied date through unchanged, and returns the run summary as JSON | The manual trigger behaving differently from the scheduled one |
-| 29 | A malformed or past `bookingDate` returns 400, and the booking service is not called | A typo in a manual run books the wrong day, or crashes |
-| 34 | A timer run with `IsPastDue` set does not call the booking service, and logs a warning | A late run books a day that was never scheduled |
+| 29 | A malformed or past `bookingDate` returns 400, and the booking service is not called. Today is accepted, including at 00:30 London in BST, when the UTC date is still the day before. | A typo in a manual run books the wrong day, or crashes, or a valid same-day run is rejected near midnight |
+| 34 | A timer run with `IsPastDue` set does not call the booking service, logs a warning, and writes the summary event with the `Missed` verdict | A late run books a day that was never scheduled, or a missed night leaves no record |
+
+### 7.8 Configuration — `PicktimeAutomation.ServicesTests`
+
+| # | Test | Defect it catches |
+| --- | --- | --- |
+| 35 | Each validation rule in section 2 stops start-up with a message naming the setting, including a missing `Picktime:ScanToken` and a missing `BookingSchedule`. A season that wraps the year end is accepted. | A bad setting that is only discovered at 00:05 |
 
 ---
 
@@ -551,7 +577,7 @@ Effectively free, but not literally zero.
 * **Functions free grant**, checked on 2026-09-30: 1 million executions and 400,000 GB-s of compute per month. It applies only to pay-as-you-go subscriptions, and it is shared by all function apps in the subscription.
 * **Expected usage:** about 13 runs a month. Each run takes about 20 seconds, so at up to 0.25 GB of memory that is under 100 GB-s a month. It is negligible against the grant, even with other function apps in the same subscription.
 * Logs (Log Analytics workspace): the first 5 GB a month per billing account is free. About 78 runs per season, each writing a few dozen log lines, is negligible against it.
-* Daily cap: 0.1 GB a day on the workspace, which is free to set. Expected usage is hundreds of times smaller. It stops a logging bug from running up a cost before the £1 budget alert can report it. The trade-off: if the cap is ever reached, logs stop for the rest of that day, which can only happen during a runaway bug. This is the one accepted exception to "no log line from a run is ever discarded" in spec section 9.
+* Daily cap: 0.1 GB a day on the workspace, which is free to set. Expected usage is hundreds of times smaller. It stops a logging bug from running up a cost before the £1 budget alert can report it. The trade-off: if the cap is ever reached, logs stop for the rest of that day, which can only happen during a runaway bug. Spec section 9 records this as the one accepted exception to "no log line from a run is ever discarded".
 * Log retention: Application Insights tables keep data for 90 days at no charge. Keep the default. Lowering it saves nothing, because the first 31 days are included in the ingestion price. Raising it adds a cost.
 * Storage account: the only unavoidable charge. Azure Functions cannot run without a storage account, and the timer trigger keeps its schedule state there. Azure has no permanent free tier for storage. Estimated at well under £1 per month, from a tiny amount of stored data and the background transactions of the Functions host. This figure is an estimate, not checked against the storage pricing page.
 
