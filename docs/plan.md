@@ -3,7 +3,7 @@
 > **What this document is for:** It answers *how will we build it?* It turns the requirements in [spec.md](spec.md) into a technical design, and it is agreed before any code is written.
 
 Status: agreed, ready to implement
-Last updated: 2026-09-29
+Last updated: 2026-09-30
 Spec: [spec.md](spec.md)
 
 This document is the record of design decisions for this project. It says how the requirements in spec.md are met, and why that way. It does not restate requirements: it refers to them by section, such as "spec section 6.2". It was split out of spec.md on 2026-09-29. Keep it updated as decisions change.
@@ -39,12 +39,19 @@ No secret or personal detail stays in source. Local development uses `local.sett
 | `Booking:SeasonStart` | `10-01` | Month and day |
 | `Booking:SeasonEnd` | `03-31` | Month and day |
 | `Booking:TimeZone` | `Europe/London` | |
+| `BookingSchedule` | `0 5 0 * * TUE,THU,FRI` | The timer's NCRONTAB expression: 00:05 on Tuesday, Thursday and Friday. See below. |
 
-Bind these with the options pattern and validate them at start-up, so a missing token fails immediately and loudly rather than at 00:05.
+Bind these with the options pattern and validate them at start-up, so a missing token fails immediately and loudly rather than at 00:05. `BookingSchedule` is the one exception. See below.
+
+The API client sends the `scantoken` header, plus only the headers that spec section 5.4 records as required. That set is unknown until spec section 7.1 is resolved, and it is resolved before the first real booking.
 
 There is deliberately no setting for `booking_addnl_fields`. It is a constant, because it never varies (spec section 8, assumption 3).
 
-There is deliberately no `RunDays` setting. The NCRONTAB expression on the timer is the single source of truth for when the automation runs. A configuration value that merely documents the cron would be a second place to change and a second place to get wrong.
+**The schedule is a setting, not code.** The timer trigger reads it as `[TimerTrigger("%BookingSchedule%")]`, so the run days and time change without a code change, as spec section 3, goal 4 requires. Today the expression is written directly in `TargetBookingFunction.cs`, which does not meet that goal.
+
+* `BookingSchedule` is the single source of truth for when the automation runs. There is deliberately no separate `RunDays` setting, because a second value describing the same schedule would be a second place to change and a second place to get wrong.
+* The name is flat, with no `Booking:` prefix, because the Functions host reads it directly. It is not bound to the options classes, so options validation does not cover it.
+* A missing `BookingSchedule` stops the Function from starting, which is loud and immediate. A mistyped expression is caught by the check in section 8.1 that the next scheduled run is 00:05 London time.
 
 ---
 
@@ -59,6 +66,8 @@ PicktimeAutomation.Models           Requests, responses, configuration, results
 PicktimeAutomation.ServicesTests    Unit tests for the two services
 PicktimeAutomation.AzureFunctionsTests  Unit tests for the functions
 ```
+
+**Target framework.** Upgrade all five projects from .NET 6 to .NET 10. Upgrade the Azure Functions worker packages (`Microsoft.Azure.Functions.Worker` and its extensions) to their current major version. This fixes defect 7 in spec section 4.1. The isolated worker model supports .NET 10 until 14 November 2028, which covers this season and the next two. Checked on 2026-09-30.
 
 Interface changes:
 
@@ -128,7 +137,7 @@ The likely extensions, and what each would cost. Anything in the first group is 
 | --- | --- |
 | Use more of the 8 targets | Add their ids to `Booking:Targets` in preference order. No code change. |
 | Different hours | Change `Booking:Hours`. No code change. |
-| Different days | Change the NCRONTAB expression. No code change. |
+| Different days | Change the `BookingSchedule` setting. No code change. |
 | A different booking lead time | Change `Booking:DaysAhead`. No code change. |
 | An alert when a run books nothing | An Azure Monitor alert on the section 5.4 query. No code change. |
 | Email or push notification from the run itself | A notification service injected into the booking service. Small, and section 5.5 anticipates it. |
@@ -141,7 +150,7 @@ The two design choices that keep this open are the configurable target chain and
 
 Spec section 6.2 requires both the trigger time and the booking date to use London time. They are handled separately, and both are needed:
 
-1. **The trigger time.** Set the Function App setting `WEBSITE_TIME_ZONE` to `GMT Standard Time`, so the NCRONTAB expression is evaluated in London time. Despite its name, that Windows id means UK time including British Summer Time. It is not fixed to GMT. A Windows plan is used for this reason — see section 8.1.
+1. **The trigger time.** Set the Function App setting `WEBSITE_TIME_ZONE` to `GMT Standard Time`, so the `BookingSchedule` expression is evaluated in London time. Despite its name, that Windows id means UK time including British Summer Time. It is not fixed to GMT. A Windows plan is used for this reason — see section 8.1.
 2. **The date arithmetic.** Compute the booking date from the current London time, not from `DateTime.Today`, which is UTC on the host. Use `TimeZoneInfo.FindSystemTimeZoneById("Europe/London")`, which .NET resolves on both Linux and Windows.
 
 Both are covered by the tests in section 7.5.
@@ -181,6 +190,8 @@ That turns an unsafe retry into a safe one, using the availability endpoint we a
 
 ### 4.2 Everything else
 
+**Provisional.** No real rejection has been captured yet (spec section 7.2). The `status: false` row assumes a rejection has the failure shape in spec section 5.2. When a rejection is captured, update this table and the test 24 fixture to match.
+
 | Situation | Behaviour |
 | --- | --- |
 | HTTP 401 or 403, or a token rejection message | No retry. Log at error level, naming authentication as the cause. This meets spec section 5.3. |
@@ -188,6 +199,7 @@ That turns an unsafe retry into a safe one, using the availability endpoint we a
 | Malformed or empty response body | No retry. Record `Failed` for that hour, with the raw body logged at debug level. |
 | An availability read fails after retries | Handle as spec section 6.4 requires: the target has no free hours. |
 | An hour throws unexpectedly | Catch, record `Failed`, and continue to the next hour. This meets spec section 6.5. |
+| Invalid or past `bookingDate` on the HTTP trigger | Return HTTP 400 with the reason, and do not call the booking service. This meets spec section 6.7. |
 
 Retries on the `GET` use the standard `Microsoft.Extensions.Http.Resilience` handler. Because the policy differs per endpoint, either register two named clients, or register the handler only for the availability path. Whichever is chosen, it must be impossible to accidentally pick up an automatic retry on the booking POST.
 
@@ -241,13 +253,13 @@ logger.LogInformation(
 
 Never log the `scantoken`.
 
-### 5.4 A season at a glance
+### 5.4 The last 90 days at a glance
 
-Paste this into Application Insights → Logs, then **Pin to dashboard**. After that, every run of the season is one click away:
+Paste this into Application Insights → Logs, then **Pin to dashboard**. After that, every run in the last 90 days is one click away:
 
 ```kusto
 traces
-| where timestamp > ago(180d)
+| where timestamp > ago(90d)
 | where message startswith "Booking run finished"
 | extend BookingDate = tostring(customDimensions.BookingDate),
          Booked      = toint(customDimensions.BookedCount),
@@ -258,7 +270,7 @@ traces
 | order by timestamp desc
 ```
 
-A season of runs, three columns wide, with any row that did not book three hours obvious at a glance. Add `| where Booked < 3` to see only the runs worth investigating.
+Up to 90 days of runs, with any row that did not book three hours obvious at a glance. The window matches the free retention period in section 8.3. Older runs are not kept. Add `| where Booked < 3` to see only the runs worth investigating.
 
 ### 5.5 Residual risk
 
@@ -299,7 +311,7 @@ Keep MSTest, which both test projects already use. Replace the `Test1.cs` placeh
 
 Every test below exists because it catches a specific defect, and each is listed with the defect it catches. If a test cannot be justified that way, it does not get written. Consequences worth stating plainly:
 
-* Thin adapters are not tested for being thin. The two Azure Function triggers hold no logic, so they get two tests between them, not a suite.
+* Thin adapters are not tested for being thin. The two Azure Function triggers hold no logic beyond the HTTP trigger's input check, so they get three tests between them, not a suite.
 * No test asserts a property getter, a constructor, or that a mock was called in a particular order.
 * If `PicktimeAutomation.AzureFunctionsTests` ends up with nothing worth asserting, delete the project rather than pad it.
 
@@ -388,12 +400,13 @@ Not tested: that the token is never written to a log. Asserting the absence of a
 
 ### 7.7 Function triggers — `PicktimeAutomation.AzureFunctionsTests`
 
-Two tests, deliberately. Both triggers are thin adapters with no logic, so there is nothing else here worth asserting.
+Three tests, deliberately. Both triggers are thin adapters. The only logic is the HTTP trigger's input check, so there is nothing else here worth asserting.
 
 | # | Test | Defect it catches |
 | --- | --- | --- |
 | 27 | An exception from the booking service is caught and logged, so the Function does not crash the host | A thrown exception taking down the host and losing the log record of why |
 | 28 | The HTTP trigger passes a supplied date through unchanged, and returns the run summary as JSON | The manual trigger behaving differently from the scheduled one |
+| 29 | A malformed or past `bookingDate` returns 400, and the booking service is not called | A typo in a manual run books the wrong day, or crashes |
 
 ---
 
@@ -408,7 +421,8 @@ Two tests, deliberately. Both triggers are thin adapters with no logic, so there
 | Storage account | Standard LRS | Required by the timer trigger |
 | Application Insights | Free tier | See section 8.3 |
 | Function App | .NET 10 isolated worker | |
-| Operating system | **Windows** | Chosen for the time zone setting. See below. |
+| Operating system | **Windows** | Required for .NET 10 on the Consumption plan, and chosen for the time zone setting. See below. |
+| Budget | £1 per month, on the resource group | Emails an alert when actual cost reaches £1. Budgets are free. See section 8.3. |
 
 Required application settings:
 
@@ -419,7 +433,12 @@ Required application settings:
 
 Plus every setting in section 2.
 
-**Why Windows.** The operating system matters here for one reason only: `WEBSITE_TIME_ZONE` takes a Windows time zone id on a Windows plan (`GMT Standard Time`) and an IANA id on a Linux plan (`Europe/London`). The setting is long-established and well documented on Windows, and less reliably behaved on Linux. A wrong trigger time is the worst failure this project can have, so the better-trodden path wins.
+**Why Windows.** There are two reasons, and either one is enough.
+
+1. **.NET 10 is not available on the Linux Consumption plan.** Microsoft's documentation states that .NET 9 is the last .NET version supported there, and that the Linux Consumption plan retires on 30 September 2028. Apps on the Windows Consumption plan are not affected. Checked on 2026-09-30.
+2. **The time zone setting.** `WEBSITE_TIME_ZONE` takes a Windows time zone id on a Windows plan (`GMT Standard Time`) and an IANA id on a Linux plan (`Europe/London`). The setting is long-established and well documented on Windows, and less reliably behaved on Linux. A wrong trigger time is the worst failure this project can have, so the better-trodden path wins.
+
+**Flex Consumption**, Microsoft's recommended successor to the Linux Consumption plan, runs only on Linux. Reason 2 therefore applies to it too, so it is not used.
 
 The code is unaffected by this choice. See section 3.3. After deployment, confirm from the logs that the next scheduled run is 00:05 London time, not 00:05 UTC.
 
@@ -439,9 +458,13 @@ Install Core Tools before the .NET upgrade, because the upgrade is checked by st
 
 Effectively free, but not literally zero.
 
-* Executions: about 78 runs per season. The free grant is 1,000,000 per month.
-* Application Insights: 5 GB per month free. About 78 runs per season, each writing a few dozen log lines, is negligible against it.
-* Storage account: a few pence per month. This is the only unavoidable charge, and it exists because a timer trigger needs storage for its schedule state.
+* **Functions free grant**, checked on 2026-09-30: 1 million executions and 400,000 GB-s of compute per month. It applies only to pay-as-you-go subscriptions, and it is shared by all function apps in the subscription.
+* **Expected usage:** about 13 runs a month. Each run takes about 20 seconds, so at up to 0.25 GB of memory that is under 100 GB-s a month. It is negligible against the grant, even with other function apps in the same subscription.
+* Application Insights: 5 GB per month of ingestion is free. About 78 runs per season, each writing a few dozen log lines, is negligible against it.
+* Log retention: Application Insights tables keep data for 90 days at no charge. Keep the default. Lowering it saves nothing, because the first 31 days are included in the ingestion price. Raising it adds a cost.
+* Storage account: the only unavoidable charge. Azure Functions cannot run without a storage account, and the timer trigger keeps its schedule state there. Azure has no permanent free tier for storage. Estimated at well under £1 per month, from a tiny amount of stored data and the background transactions of the Functions host. This figure is an estimate, not checked against the storage pricing page.
+
+**Approved on 2026-09-30:** the storage account cost, up to £1 per month. The £1 budget in section 8.1 sends an alert if the real cost is ever higher, so the estimate is checked by Azure rather than trusted.
 
 ### 8.4 CI/CD
 
