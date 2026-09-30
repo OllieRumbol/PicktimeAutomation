@@ -3,7 +3,7 @@
 > **What this document is for:** It answers *what are we building, and why?* It is the source of truth for requirements.
 
 Status: agreed scope, ready to implement
-Last updated: 2026-09-29
+Last updated: 2026-09-30
 
 This document is the record of requirements for this project. It says what must be true, not how it is achieved. Each fact is stated once: the plan refers to sections here rather than repeating them. Keep it updated as requirements change.
 
@@ -347,6 +347,8 @@ An HTTP-triggered function exists alongside the timer, for testing and for catch
 | Body or query | Optional `bookingDate` as `yyyy-MM-dd` |
 | Default | When no date is given, use the same rule as the timer: London today plus 7 days |
 | Season gate | Applies, exactly as the timer does |
+| Invalid date | A `bookingDate` that is not a valid `yyyy-MM-dd` date is rejected with a clear error. Nothing is booked. |
+| Past date | A `bookingDate` before today, in London time, is rejected with a clear error. Nothing is booked. Today is allowed. |
 | Response | The run summary as JSON, so the outcome is visible without opening the logs |
 
 It uses the same code path as the timer, so manual and scheduled runs cannot behave differently.
@@ -355,7 +357,7 @@ It uses the same code path as the timer, so manual and scheduled runs cannot beh
 
 ## 7. Remaining unknowns
 
-Both endpoints are now captured and a booking has been proven end to end, so nothing blocks implementation. Two small things are still to be pinned down, both cheaply, during phase 3.
+Both endpoints are now captured and a booking has been proven end to end, so nothing blocks implementation. Two small things are still to be pinned down, both cheaply, before the first real booking.
 
 ### 7.1 The minimum header set
 
@@ -369,7 +371,7 @@ Stop at the first step that fails, and keep whatever the last successful attempt
 
 ### 7.2 What a rejection looks like
 
-No rejected booking has been captured. Get one by posting a booking for a slot that is already taken — the 17:00 slot on target 2b for 29 September 2026 is now taken, so it can serve as the test case. Record the exact `status`, `message` and HTTP status code in section 5.2.
+No rejected booking has been captured. Get one by posting a booking for a slot that is already taken — any slot that is already taken can serve as the test case, for example one booked by hand. Record the exact `status`, `message` and HTTP status code in section 5.2.
 
 ---
 
@@ -384,10 +386,10 @@ Recorded so they can be corrected rather than discovered later.
 5. The season is a fixed 1 October to 31 March, the same every year.
 6. Slots are always exactly one hour, and 17:00 to 20:00 is always within the hall's opening hours.
 7. The `scantoken` remains valid for the whole season. Reuse is proven over six months, so this is now evidenced rather than assumed. If it ever stops working, the fix is to capture a new one and update one application setting.
-8. An Azure subscription is available, and the resource group and Function App name will be settled during phase 5.
+8. A pay-as-you-go Azure subscription is available. The resource group and Function App names will be settled when the Azure resources are created.
 9. The 7-day window is a release rule, not an API restriction. The verified booking was made 1 day ahead, so the endpoint accepts any date whose slots have been released. The automation still uses 7 days, because that is when the slots appear.
 
-One observation on timing: to book Thursday 1 October 2026, the run had to happen on Thursday 24 September, which has passed. The first booking this automation can take is Tuesday 6 October 2026, from the run on Tuesday 29 September.
+One observation on timing: bookings are made by hand until the automation is deployed. The first automated booking comes from the first scheduled run after deployment, for the date 7 days later.
 
 ---
 
@@ -402,6 +404,6 @@ One observation on timing: to book Thursday 1 October 2026, the run had to happe
 * Deployment is automated, and a failing test stops a deployment.
 * One real booking has been confirmed on the Picktime site from a run in Azure, and its confirmation email arrived.
 * No log line from a run is ever discarded.
-* Every run of the season can be reviewed in one place.
+* Every run in the last 90 days can be reviewed in one place.
 * The logs make it clear, without reading the code, what any given run did.
 * `README.md` explains what the project does, how to run it locally, and which settings it needs.
