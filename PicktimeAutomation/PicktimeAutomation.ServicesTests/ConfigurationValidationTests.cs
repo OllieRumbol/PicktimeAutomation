@@ -49,6 +49,9 @@ public sealed class ConfigurationValidationTests
     [DataRow("Booking:SeasonStart", "13-01", "Booking:SeasonStart")]
     [DataRow("Booking:SeasonStart", "10-32", "Booking:SeasonStart")]
     [DataRow("Booking:SeasonStart", "1-1", "Booking:SeasonStart")]
+    [DataRow("Booking:SeasonStart", "+1-01", "Booking:SeasonStart")]
+    [DataRow("Booking:SeasonStart", " 1-01", "Booking:SeasonStart")]
+    [DataRow("Booking:SeasonStart", "10-+1", "Booking:SeasonStart")]
     [DataRow("Booking:SeasonEnd", "02-30", "Booking:SeasonEnd")]
     public void AddPicktimeServices_SettingIsInvalid_StopsStartUpWithAMessageNamingTheSetting(
         string key,

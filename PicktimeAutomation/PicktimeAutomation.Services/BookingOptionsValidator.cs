@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.Extensions.Options;
 using PicktimeAutomation.Models;
 
@@ -109,12 +110,13 @@ public sealed class BookingOptionsValidator : IValidateOptions<BookingOptions>
             return false;
         }
 
-        if (!int.TryParse(parts[0], out var month) || month < 1 || month > 12)
+        // NumberStyles.None accepts digits only. The default also accepts a sign or spaces, so "+1" would pass.
+        if (!int.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture, out var month) || month < 1 || month > 12)
         {
             return false;
         }
 
-        if (!int.TryParse(parts[1], out var day) || day < 1)
+        if (!int.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out var day) || day < 1)
         {
             return false;
         }
