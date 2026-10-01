@@ -10,6 +10,9 @@
 bin/
 obj/
 
+# Test output
+TestResults/
+
 # Visual Studio profiler
 *.psess
 *.vsp

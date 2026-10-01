@@ -35,7 +35,7 @@ Goal: the solution runs on .NET 10, nothing sensitive is in source, and configur
     - `bin/`, `obj/` and `local.settings.json` are ignored.
     - Both ignore files are tracked by git.
   - Verify: `git ls-files "*.gitignore"` lists both ignore files. This is the check that proves the fix; `git check-ignore -v PicktimeAutomation/PicktimeAutomation.AzureFunctions/local.settings.json` passes even before it.
-  - Notes: Done first so that the upgrade in T2 cannot stage `bin/` or `obj/` by accident.
+  - Notes: Done first so that the upgrade in T2 cannot stage `bin/` or `obj/` by accident. Also ignores `TestResults/`, which the standard test command writes and which no ignore file covered outside the Functions project.
 
 - [ ] **T2 — Upgrade to .NET 10**
   - Refs: spec 4.1 defect 7, plan 3, plan 8.1, plan 8.2
