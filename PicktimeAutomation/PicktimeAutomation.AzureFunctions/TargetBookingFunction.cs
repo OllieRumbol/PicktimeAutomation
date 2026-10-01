@@ -17,7 +17,7 @@ public class TargetBookingFunction
     }
 
     [Function("TargetBookingFunction")]
-    public async Task Run([TimerTrigger("0 5 0 * * TUE,THU,FRI")] object timer)
+    public async Task Run([TimerTrigger("%BookingSchedule%")] object timer)
     {
         _logger.LogInformation("TargetBookingFunction executed at: {time}", DateTime.UtcNow);
 

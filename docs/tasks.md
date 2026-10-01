@@ -49,7 +49,7 @@ Goal: the solution runs on .NET 10, nothing sensitive is in source, and configur
   - Verify: `dotnet build PicktimeAutomation/PicktimeAutomation.AzureFunctions.slnx`, then `func start` in `PicktimeAutomation/PicktimeAutomation.AzureFunctions`
   - Notes: The start check needs Azure Functions Core Tools v4. Install it before this task. Azurite must also be running before `func start`, as in plan section 8.2. Core Tools 4.14.0 and Azure CLI 2.90.0 were both installed by the time this task ran, so plan section 8.2 was updated to match. The same update replaced the `npm install -g azurite` route with Visual Studio's bundled Azurite, because this machine's Node.js v16.9.1 is below the minimum for current Azurite. Approved on 2026-10-01. Package versions: `Microsoft.Azure.Functions.Worker` 1.6.0 to 2.52.0, `.Worker.Sdk` 1.3.0 to 2.1.0, `.Worker.Extensions.Timer` 4.0.1 to 4.3.1, and `.Worker.Extensions.Http.AspNetCore` 2.1.1 added. No source change was needed beyond `Program.cs`.
 
-- [ ] **T3 — Move configuration out of source**
+- [x] **T3 — Move configuration out of source**
   - Refs: spec 3 goal 4, spec 4.1 defect 4, spec 5.3, spec 6.1, plan 2, plan 3, plan 6, plan 7.1, plan 7.2 rule 5, plan 7.8, test 35
   - Depends on: T2
   - Done when:
@@ -63,7 +63,10 @@ Goal: the solution runs on .NET 10, nothing sensitive is in source, and configur
     - `PicktimeAutomation.ServicesTests` references `PicktimeAutomation.Services`.
     - Test 35 passes.
   - Verify: the standard test command; then `git grep -n -i -E "eyJ|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[a-z]{2,}|[0-9a-f]{8}-[0-9a-f]{4}-|oliver|bourne" -- "*.cs" "*.json"` returns nothing (token, email address, resource ids and the archer's name); then `func start` lists the timer trigger with the schedule from `BookingSchedule`
-  - Notes:
+  - Notes: Options classes live in `PicktimeAutomation.Models`, which plan section 3 names as the home for configuration. One `IValidateOptions<T>` per class sits in `PicktimeAutomation.Services`, next to `AddPicktimeServices`. Three points to record:
+    1. `AddPicktimeServices` takes `IConfiguration` as well as `IServiceCollection`. Plan section 3 names the method, not its parameter list. The configuration is needed to bind the sections and to check `BookingSchedule`, which plan section 2 requires to stop start-up and which is not bound to an options class.
+    2. `Picktime:BrowserId` and `Picktime:Referer` are not added. Plan section 2 marks both "only if required", which spec section 5.4 settles in T12. Adding them now would mean settings that nothing reads.
+    3. `func start` lists the timer trigger but does not print the NCRONTAB expression. That the trigger is indexed at all proves `%BookingSchedule%` resolved. It was confirmed by removing `BookingSchedule` and starting again: start-up stopped with "BookingSchedule must not be empty", and no function was listed. T9 adds the log line that states the schedule's last and next occurrence on every run.
 
 ## Phase 2 — Core booking logic and safety
 
@@ -313,7 +316,7 @@ Goal: the automation is proved in production and left running.
     - Every item in the spec's definition of done (spec section 9) is true.
     - Remaining items are recorded, or closed.
   - Verify: go through spec section 9 item by item
-  - Notes: Decide whether `TODO.md` is kept as a backlog or deleted. Progress lives in this file.
+  - Notes: `TODO.md` was deleted on 2026-10-01. It held only an unfilled template, so nothing was lost. Progress lives in this file.
 
 ---
 
@@ -327,3 +330,4 @@ Goal: the automation is proved in production and left running.
 
 * 2026-10-01 — T1 — Fix the self-ignoring `.gitignore` — branch `task/t1-fix-gitignore`
 * 2026-10-01 — T2 — Upgrade to .NET 10 — branch `task/t2-upgrade-dotnet-10`
+* 2026-10-01 — T3 — Move configuration out of source — branch `task/t3-move-config-out-of-source`
