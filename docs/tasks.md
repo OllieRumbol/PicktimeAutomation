@@ -37,7 +37,7 @@ Goal: the solution runs on .NET 10, nothing sensitive is in source, and configur
   - Verify: `git ls-files "*.gitignore"` lists both ignore files. This is the check that proves the fix; `git check-ignore -v PicktimeAutomation/PicktimeAutomation.AzureFunctions/local.settings.json` passes even before it.
   - Notes: Done first so that the upgrade in T2 cannot stage `bin/` or `obj/` by accident. Also ignores `TestResults/`, which the standard test command writes and which no ignore file covered outside the Functions project.
 
-- [ ] **T2 — Upgrade to .NET 10**
+- [x] **T2 — Upgrade to .NET 10**
   - Refs: spec 4.1 defect 7, plan 3, plan 8.1, plan 8.2
   - Depends on: T1
   - Done when:
@@ -47,7 +47,7 @@ Goal: the solution runs on .NET 10, nothing sensitive is in source, and configur
     - The solution builds with no errors.
     - The Function App starts locally and the timer trigger is listed.
   - Verify: `dotnet build PicktimeAutomation/PicktimeAutomation.AzureFunctions.slnx`, then `func start` in `PicktimeAutomation/PicktimeAutomation.AzureFunctions`
-  - Notes: The start check needs Azure Functions Core Tools v4. Install it before this task. Azurite must also be running before `func start`, as in plan section 8.2.
+  - Notes: The start check needs Azure Functions Core Tools v4. Install it before this task. Azurite must also be running before `func start`, as in plan section 8.2. Core Tools 4.14.0 and Azure CLI 2.90.0 were both installed by the time this task ran, so plan section 8.2 was updated to match. The same update replaced the `npm install -g azurite` route with Visual Studio's bundled Azurite, because this machine's Node.js v16.9.1 is below the minimum for current Azurite. Approved on 2026-10-01. Package versions: `Microsoft.Azure.Functions.Worker` 1.6.0 to 2.52.0, `.Worker.Sdk` 1.3.0 to 2.1.0, `.Worker.Extensions.Timer` 4.0.1 to 4.3.1, and `.Worker.Extensions.Http.AspNetCore` 2.1.1 added. No source change was needed beyond `Program.cs`.
 
 - [ ] **T3 — Move configuration out of source**
   - Refs: spec 3 goal 4, spec 4.1 defect 4, spec 5.3, spec 6.1, plan 2, plan 3, plan 6, plan 7.1, plan 7.2 rule 5, plan 7.8, test 35
@@ -326,3 +326,4 @@ Goal: the automation is proved in production and left running.
 <!-- One line per completed task: date, task, pull request or commit. -->
 
 * 2026-10-01 — T1 — Fix the self-ignoring `.gitignore` — branch `task/t1-fix-gitignore`
+* 2026-10-01 — T2 — Upgrade to .NET 10 — branch `task/t2-upgrade-dotnet-10`

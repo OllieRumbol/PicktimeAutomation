@@ -562,13 +562,19 @@ Checked on this machine:
 | Tool | Status | Needed for |
 | --- | --- | --- |
 | .NET 10 SDK | Installed, 10.0.401 | Building and testing |
-| Azure Functions Core Tools v4 | **Not installed** | Running the Function locally |
-| Azure CLI | **Not installed** | Creating the Azure resources. The portal is an alternative. |
-| Azurite (local storage emulator) | Bundled with Visual Studio 2026. **Not installed** for the terminal. Node.js and npm are installed. | Running the Function locally. The timer trigger needs storage, and `local.settings.json` points it at Azurite. |
+| Azure Functions Core Tools v4 | Installed, 4.14.0 | Running the Function locally |
+| Azure CLI | Installed, 2.90.0 | Creating the Azure resources. The portal is an alternative. |
+| Azurite (local storage emulator) | Bundled with Visual Studio 2026. Not installed as an npm package, and it cannot be: Node.js on this machine is v16.9.1, which is below the minimum for current Azurite. | Running the Function locally. The timer trigger needs storage, and `local.settings.json` points it at Azurite. |
 
-Install Core Tools before the .NET upgrade, because the upgrade is checked by starting the Function locally. Azure CLI blocks nothing.
+**Azurite** must be running before the Function starts locally. Use the copy bundled with Visual Studio. From Visual Studio, nothing is needed, because Visual Studio starts it. From a terminal, start it in a second terminal before `func start`:
 
-**Azurite** must be running before the Function starts locally. From Visual Studio, nothing is needed, because Visual Studio starts it. From a terminal, install it once with `npm install -g azurite`, then run `azurite` in a second terminal before `func start`. It is free, and nothing runs in Azure.
+```
+"C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\Extensions\Microsoft\Azure Storage Emulator\azurite.exe" --location "$env:LOCALAPPDATA\Azurite"
+```
+
+Do not install Azurite with `npm install -g azurite`. This machine's Node.js is v16.9.1, which current Azurite does not support. The bundled copy carries its own runtime, so it does not use the machine's Node.js. It is free, and nothing runs in Azure.
+
+Checked on 2026-10-01, in T2: Azurite started this way, and `func start` then listed the timer trigger.
 
 ### 8.3 Cost
 
