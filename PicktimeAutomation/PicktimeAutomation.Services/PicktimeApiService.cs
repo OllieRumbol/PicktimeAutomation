@@ -1,4 +1,5 @@
-﻿using PicktimeAutomation.Models;
+using Microsoft.Extensions.Options;
+using PicktimeAutomation.Models;
 using System.Text;
 using System.Text.Json;
 
@@ -6,11 +7,25 @@ namespace PicktimeAutomation.Services;
 
 public class PicktimeApiService : IPicktimeApiService
 {
-    private readonly HttpClient _httpClient;
+    // The club is in London, so the time zone is a constant, not a setting.
+    private const string ClubTimeZone = "Europe/London";
 
-    public PicktimeApiService(HttpClient httpClient)
+    private readonly HttpClient _httpClient;
+    private readonly PicktimeOptions _picktimeOptions;
+    private readonly ArcherOptions _archerOptions;
+
+    public PicktimeApiService(
+        HttpClient httpClient,
+        IOptions<PicktimeOptions> picktimeOptions,
+        IOptions<ArcherOptions> archerOptions)
     {
-        _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+        ArgumentNullException.ThrowIfNull(httpClient);
+        ArgumentNullException.ThrowIfNull(picktimeOptions);
+        ArgumentNullException.ThrowIfNull(archerOptions);
+
+        _httpClient = httpClient;
+        _picktimeOptions = picktimeOptions.Value;
+        _archerOptions = archerOptions.Value;
     }
 
     public async Task<string> CreateBookingAsync(BookingRequest createBookingRequest)
@@ -22,18 +37,18 @@ public class PicktimeApiService : IPicktimeApiService
 
         var payload = new
         {
-            account_id = "4fcc15b7-663d-4320-9d23-bc1f8fc0b669",
+            account_id = _picktimeOptions.AccountId,
             send_sms = false,
-            location = "dd0a2b7e-dc32-4100-b3a0-362621c944bc",
+            location = _picktimeOptions.LocationId,
             start_date_time = createBookingRequest.ResourceId, //202603261800
             duration = 60,
             cost = 0,
             type = "resource",
             resources = new[] { createBookingRequest.ResourceId },
-            fname = "Oliver",
-            lname = "Bourne",
-            email = "otgbourne@hotmail.co.uk",
-            timezone = "Europe/London"
+            fname = _archerOptions.FirstName,
+            lname = _archerOptions.LastName,
+            email = _archerOptions.Email,
+            timezone = ClubTimeZone
         };
 
         var json = JsonSerializer.Serialize(payload);

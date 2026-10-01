@@ -1,4 +1,5 @@
-﻿using System.Text.Json;
+﻿using Microsoft.Extensions.Options;
+using System.Text.Json;
 using PicktimeAutomation.Models;
 
 namespace PicktimeAutomation.Services;
@@ -6,29 +7,34 @@ namespace PicktimeAutomation.Services;
 public class PicktimeBookingService : IPicktimeBookingService
 {
     private readonly IPicktimeApiService _api;
+    private readonly BookingOptions _bookingOptions;
 
-    private const string Target2bBookedResourceId = "48fcab1d-9b0b-4e2f-a539-b3d00364a0b5";
-    private const string Target3aBookedResourceId = "81f2dd0e-b8e5-4703-8ad6-6238cdf27282";
-
-    public PicktimeBookingService(IPicktimeApiService api)
+    public PicktimeBookingService(IPicktimeApiService api, IOptions<BookingOptions> bookingOptions)
     {
-        _api = api ?? throw new ArgumentNullException(nameof(api));
+        ArgumentNullException.ThrowIfNull(api);
+        ArgumentNullException.ThrowIfNull(bookingOptions);
+
+        _api = api;
+        _bookingOptions = bookingOptions.Value;
     }
 
     public async Task<BookingSummary> BookArcheryIndoorTarget()
     {
         var summary = new BookingSummary();
 
-        var futureBookingDate = DateTime.Today.AddDays(7);
-        var hours = new[] { 17, 18, 19 };
-        var bookingDateTimeNumbers = hours
+        var futureBookingDate = DateTime.Today.AddDays(_bookingOptions.DaysAhead);
+        var bookingDateTimeNumbers = _bookingOptions.Hours
             .Select(h => long.Parse(futureBookingDate.ToString("yyyyMMdd") + $"{h:00}00"))
             .ToList();
+
+        // Only the preferred target is tried. The per-hour fallback to the next target
+        // comes with the booking algorithm in spec section 6.4.
+        var preferredTarget = _bookingOptions.Targets[0];
 
         var bookingRequestsForDate = bookingDateTimeNumbers.Select(bookingDateTime => new BookingRequest
         {
             DateTimeOfBooking = bookingDateTime,
-            ResourceId = Target2bBookedResourceId
+            ResourceId = preferredTarget.ResourceId
         }).ToList();
 
         foreach (var request in bookingRequestsForDate)
