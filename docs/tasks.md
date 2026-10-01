@@ -2,7 +2,7 @@
 
 > **What this document is for:** It answers *what do we do next?* It splits the approved design into small, verifiable steps and tracks progress against them.
 
-Last updated: 2026-09-30
+Last updated: 2026-10-01
 
 <!--
 How to use this file
@@ -27,7 +27,7 @@ dotnet test PicktimeAutomation/PicktimeAutomation.AzureFunctions.slnx
 
 Goal: the solution runs on .NET 10, nothing sensitive is in source, and configuration is validated at start-up.
 
-- [ ] **T1 — Fix the self-ignoring `.gitignore`**
+- [x] **T1 — Fix the self-ignoring `.gitignore`**
   - Refs: spec 4.1 defect 6, plan 6
   - Depends on: —
   - Done when:
@@ -324,3 +324,5 @@ Goal: the automation is proved in production and left running.
 ## Completed log
 
 <!-- One line per completed task: date, task, pull request or commit. -->
+
+* 2026-10-01 — T1 — Fix the self-ignoring `.gitignore` — branch `task/t1-fix-gitignore`

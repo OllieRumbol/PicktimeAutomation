@@ -1,0 +1,68 @@
+# Visual Studio / .NET
+.vs/
+.vscode/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Build output
+bin/
+obj/
+
+# Visual Studio profiler
+*.psess
+*.vsp
+*.vspx
+
+# NuGet
+*.nupkg
+packages/
+.project.lock.json
+.nuget/
+
+# Rider
+.idea/
+
+# Azure Functions local settings
+local.settings.json
+
+# Azure Functions build artifacts
+*.funcpack
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# JetBrains Rider
+.idea/
+
+# Coverage
+coverage/
+*.coverage
+*.coveragexml
+
+# Resharper
+_ReSharper*/
+*.[Rr]e[Ss]harper
+
+# Dotnet user secrets
+secrets.json
+
+# Temporary files
+*.tmp
+*~
+
+# Ignore compiled binaries from other tools
+*.dll
+*.exe
+*.cache
+*.pdb
+
+# Preserve host.json tracked in repo but ignore local overrides
+# (host.json is typically tracked; keep it). If you have a local override, add it explicitly.
+
+# End of file
