@@ -18,18 +18,18 @@ public static class BookingLoggingExtensions
             return;
         }
 
-        logger.LogInformation("Booking attempt completed. Success: {Success}, Attempts: {Attempts}", summary.Success, summary.AttemptsDetails.Count);
+        logger.LogInformation("Booking attempt completed. Verdict: {Verdict}, Attempts: {Attempts}", summary.Verdict, summary.Attempts.Count);
 
-        for (var i = 0; i < summary.AttemptsDetails.Count; i++)
+        for (var i = 0; i < summary.Attempts.Count; i++)
         {
-            var attempt = summary.AttemptsDetails[i];
+            var attempt = summary.Attempts[i];
             if (string.IsNullOrWhiteSpace(attempt.ErrorMessage))
             {
-                logger.LogInformation("Attempt {AttemptNumber}: Success={Success}", i + 1, attempt.Success);
+                logger.LogInformation("Attempt {AttemptNumber}: Outcome={Outcome}", i + 1, attempt.Outcome);
             }
             else
             {
-                logger.LogWarning("Attempt {AttemptNumber}: Success={Success}, Error={Error}", i + 1, attempt.Success, attempt.ErrorMessage);
+                logger.LogWarning("Attempt {AttemptNumber}: Outcome={Outcome}, Error={Error}", i + 1, attempt.Outcome, attempt.ErrorMessage);
             }
         }
 

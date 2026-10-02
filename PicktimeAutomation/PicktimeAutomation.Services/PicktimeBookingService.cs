@@ -20,38 +20,38 @@ public class PicktimeBookingService : IPicktimeBookingService
 
     public async Task<BookingSummary> BookArcheryIndoorTarget()
     {
-        var summary = new BookingSummary();
-
         var futureBookingDate = DateTime.Today.AddDays(_bookingOptions.DaysAhead);
-        var bookingDateTimeNumbers = _bookingOptions.Hours
-            .Select(h => long.Parse(futureBookingDate.ToString("yyyyMMdd") + $"{h:00}00"))
-            .ToList();
 
         // Only the preferred target is tried. The per-hour fallback to the next target
         // comes with the booking algorithm in spec section 6.4.
         var preferredTarget = _bookingOptions.Targets[0];
 
-        var bookingRequestsForDate = bookingDateTimeNumbers.Select(bookingDateTime => new BookingRequest
+        var attempts = new List<BookingAttempt>();
+        foreach (var hour in _bookingOptions.Hours)
         {
-            DateTimeOfBooking = bookingDateTime,
-            ResourceId = preferredTarget.ResourceId
-        }).ToList();
+            var bookingDateTime = long.Parse(futureBookingDate.ToString("yyyyMMdd") + $"{hour:00}00");
+            var request = new BookingRequest(bookingDateTime, preferredTarget.ResourceId);
 
-        foreach (var request in bookingRequestsForDate)
-        {
             var raw = await _api.CreateBookingAsync(request);
-            summary.AttemptsDetails.Add(ParseBookingApiResponse(raw));
+            attempts.Add(ParseBookingApiResponse(raw, hour, preferredTarget.Name));
         }
 
-        summary.Success = summary.AttemptsDetails.Count > 0 && summary.AttemptsDetails.All(a => a.Success);
-        return summary;
+        // Keeps the old all-or-nothing rule until T8 adds the verdict table in plan section 3.1.
+        var allBooked = attempts.Count > 0 && attempts.All(a => a.Outcome == BookingOutcome.Booked);
+
+        return new BookingSummary
+        {
+            BookingDate = DateOnly.FromDateTime(futureBookingDate),
+            Attempts = attempts,
+            Verdict = allBooked ? RunVerdict.Success : RunVerdict.Failure
+        };
     }
 
-    private static BookingAttempt ParseBookingApiResponse(string? raw)
+    private static BookingAttempt ParseBookingApiResponse(string? raw, int hour, string targetName)
     {
         if (string.IsNullOrWhiteSpace(raw))
         {
-            return new BookingAttempt { Success = false, ErrorMessage = "Empty response from API" };
+            return new BookingAttempt { Hour = hour, Outcome = BookingOutcome.Failed, ErrorMessage = "Empty response from API" };
         }
 
         try
@@ -61,15 +61,15 @@ public class PicktimeBookingService : IPicktimeBookingService
             var success = JsonSerializer.Deserialize<BookingSuccessfulResponse>(raw, options);
             if (success?.Status == true && success.Data != null)
             {
-                return new BookingAttempt { Success = true };
+                return new BookingAttempt { Hour = hour, Outcome = BookingOutcome.Booked, TargetName = targetName, BookingId = success.Data.Id };
             }
 
             var fail = JsonSerializer.Deserialize<BookingUnsuccessfulResponse>(raw, options);
-            return new BookingAttempt { Success = false, ErrorMessage = fail?.Message ?? "Unsuccessful response from API" };
+            return new BookingAttempt { Hour = hour, Outcome = BookingOutcome.Failed, ErrorMessage = fail?.Message ?? "Unsuccessful response from API" };
         }
         catch (JsonException)
         {
-            return new BookingAttempt { Success = false, ErrorMessage = "Invalid JSON response" };
+            return new BookingAttempt { Hour = hour, Outcome = BookingOutcome.Failed, ErrorMessage = "Invalid JSON response" };
         }
     }
 }

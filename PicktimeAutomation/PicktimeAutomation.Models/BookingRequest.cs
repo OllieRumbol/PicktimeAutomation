@@ -1,8 +1,6 @@
-﻿namespace PicktimeAutomation.Models;
+namespace PicktimeAutomation.Models;
 
-public class BookingRequest
-{
-    public long DateTimeOfBooking { get; set; }
-
-    public string ResourceId { get; set; } = string.Empty;
-}
+/// <summary>
+/// What varies per booking. The rest of the wire payload comes from constants and configuration.
+/// </summary>
+public sealed record BookingRequest(long DateTimeOfBooking, string ResourceId);

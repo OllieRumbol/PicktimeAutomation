@@ -2,7 +2,7 @@
 
 > **What this document is for:** It answers *what do we do next?* It splits the approved design into small, verifiable steps and tracks progress against them.
 
-Last updated: 2026-10-01
+Last updated: 2026-10-02
 
 <!--
 How to use this file
@@ -74,7 +74,7 @@ Goal: the solution runs on .NET 10, nothing sensitive is in source, and configur
 
 Goal: the booking rules in spec section 6 are implemented, covered by their tests, and safe against duplicate bookings before any real booking is made.
 
-- [ ] **T4 — Update the models**
+- [x] **T4 — Update the models**
   - Refs: plan 3.1, spec 6.5
   - Depends on: T3
   - Done when:
@@ -85,7 +85,7 @@ Goal: the booking rules in spec section 6 are implemented, covered by their test
     - `BookingSummary` holds the booking date, `FailedReads`, and a `RunVerdict` with every value in plan section 3.1.
     - The solution builds.
   - Verify: `dotnet build PicktimeAutomation/PicktimeAutomation.AzureFunctions.slnx`
-  - Notes: Moved before the API client work, because T6 returns `BookingResult`.
+  - Notes: Moved before the API client work, because T6 returns `BookingResult`. Until T8, `PicktimeBookingService` keeps its old all-or-nothing rule, now written as the `Success` or `Failure` verdict. A booked hour also records its target name and booking id. `BookingAttempt` moved to its own file. Nothing uses `BookingResult` until T6.
 
 - [ ] **T5 — Read availability**
   - Refs: spec 4.1 defect 2, spec 5.1, spec 6.4, plan 3, plan 4.2, plan 7.6, tests 19–21, 25
@@ -335,3 +335,4 @@ Goal: the automation is proved in production and left running.
 * 2026-10-01 — T1 — Fix the self-ignoring `.gitignore` — branch `task/t1-fix-gitignore`
 * 2026-10-01 — T2 — Upgrade to .NET 10 — branch `task/t2-upgrade-dotnet-10`
 * 2026-10-01 — T3 — Move configuration out of source — branch `task/t3-move-config-out-of-source`
+* 2026-10-02 — T4 — Update the models — branch `task/t4-update-models`
