@@ -38,6 +38,7 @@ No secret or personal detail stays in source. Local development uses `local.sett
 | `Booking:SeasonStart` | `10-01` | Month and day |
 | `Booking:SeasonEnd` | `03-31` | Month and day |
 | `BookingSchedule` | `0 5 0 * * TUE,THU,FRI` | The timer's NCRONTAB expression: 00:05 on Tuesday, Thursday and Friday. See below. |
+| `AzureWebJobs.TargetBookingFunction.Disabled` | `true` | **Local only.** Stops the timer firing during local runs (section 8.2). Never set it in Azure. |
 
 Bind these with the options pattern and validate them at start-up, so a missing token fails immediately and loudly rather than at 00:05. `BookingSchedule` is the one exception. See below.
 
@@ -575,6 +576,12 @@ Checked on this machine:
 Do not install Azurite with `npm install -g azurite`. This machine's Node.js is v16.9.1, which current Azurite does not support. The bundled copy carries its own runtime, so it does not use the machine's Node.js. It is free, and nothing runs in Azure.
 
 Checked on 2026-10-01, in T2: Azurite started this way, and `func start` then listed the timer trigger.
+
+**The timer is disabled for local runs.** `local.settings.json` sets `AzureWebJobs.TargetBookingFunction.Disabled` to `true`. Without it, `func start` can make real calls to Picktime: the timer keeps a record of its runs in Azurite, and when it sees a missed scheduled run it fires at once. The late-run check (section 3) prevents this only once it is built, and only for the timer.
+
+This happened on 2026-10-02. A `func start` on a Friday morning fired the missed 00:05 run, which sent three real booking requests to Picktime. No booking was made only because defect 1 in spec section 4.1 made every request invalid. Once defect 1 is fixed, the same mistake would make real bookings.
+
+With the setting, `func start` reports "Function TargetBookingFunction is disabled" and the timer never runs. The HTTP trigger is not affected, so deliberate test bookings through it still work. The setting must never be set in Azure, where the timer must run.
 
 ### 8.3 Cost
 

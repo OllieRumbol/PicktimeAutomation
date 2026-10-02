@@ -23,6 +23,8 @@ Unless a task says otherwise, run commands from the repository root. The standar
 dotnet test PicktimeAutomation/PicktimeAutomation.AzureFunctions.slnx
 ```
 
+**Before any local `func start`,** check that `local.settings.json` sets `AzureWebJobs.TargetBookingFunction.Disabled` to `true`. Without it, the timer can fire a missed run against the real Picktime API (plan section 8.2). `func start` must report "Function TargetBookingFunction is disabled".
+
 ## Phase 1 — Foundations
 
 Goal: the solution runs on .NET 10, nothing sensitive is in source, and configuration is validated at start-up.
@@ -101,6 +103,7 @@ Goal: the booking rules in spec section 6 are implemented, covered by their test
   - Refs: spec 4.1 defect 1, spec 5.2, spec 5.3, plan 2, plan 3, plan 3.1, plan 4.1, plan 4.2, plan 7.4, plan 7.6, tests 22–24, 26, 30, 32
   - Depends on: T4, T5
   - Done when:
+    - Before `start_date_time` is fixed: `local.settings.json` sets `AzureWebJobs.TargetBookingFunction.Disabled` to `true`, as in plan section 8.2. Fixing defect 1 makes booking requests valid, so from this task on a timer run would make real bookings.
     - `start_date_time` comes from `DateTimeOfBooking`.
     - The wire payload matches spec section 5.2 exactly. `alt_number_Ext` uses an explicit JSON property name. `booking_addnl_fields` is a constant, with no setting.
     - `CreateBookingAsync` returns a `BookingResult`, and takes a `CancellationToken`.
@@ -245,6 +248,7 @@ Goal: the Function runs in Azure on the correct schedule, deployed by CI.
   - Done when:
     - The resources in plan section 8.1 exist, on a Windows Consumption plan in UK South, in a pay-as-you-go subscription.
     - Every application setting from plan sections 2 and 8.1 is set, including `WEBSITE_TIME_ZONE` and `BookingSchedule`. Lists use the flattened keys in plan section 2.
+    - `AzureWebJobs.TargetBookingFunction.Disabled` is **not** set in Azure. It is a local-only setting (plan section 2).
     - A £1 monthly budget on the resource group emails an alert when actual cost reaches £1.
     - Application Insights is workspace-based, and its Log Analytics workspace has a daily cap of 0.1 GB.
     - The user-assigned managed identity exists, with a federated credential for this repository's `main` branch and the Website Contributor role on the Function App.
