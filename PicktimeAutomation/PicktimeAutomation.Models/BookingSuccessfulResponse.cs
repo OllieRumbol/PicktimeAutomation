@@ -4,6 +4,9 @@ namespace PicktimeAutomation.Models;
 
 public class BookingSuccessfulResponse
 {
+    // Required, so a body without "status" cannot be parsed and the booking result is Unknown.
+    // Read as false, it would be a rejection, which falls through to the next target (plan section 4.1).
+    [JsonRequired]
     [JsonPropertyName("status")]
     public bool Status { get; set; }
 

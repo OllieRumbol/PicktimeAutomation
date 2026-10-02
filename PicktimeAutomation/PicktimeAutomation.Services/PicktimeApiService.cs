@@ -3,6 +3,7 @@ using PicktimeAutomation.Models;
 using PicktimeAutomation.Services.Exceptions;
 using PicktimeAutomation.Services.Interfaces;
 using System.Globalization;
+using System.Net;
 using System.Text;
 using System.Text.Json;
 
@@ -14,9 +15,13 @@ public class PicktimeApiService : IPicktimeApiService
     private const string ClubTimeZone = "Europe/London";
 
     private const string SlotsPath = "endpoint/1.0.0/ia/slots";
+    private const string SaveEventPath = "endpoint/1.0.0/ia/save/event";
 
     // Every bookable slot at the club is one hour long.
     private const string SlotLengthInMinutes = "60";
+    private const int BookingDurationInMinutes = 60;
+
+    private const string BookingType = "resource";
 
     private readonly HttpClient _httpClient;
     private readonly PicktimeOptions _picktimeOptions;
@@ -50,34 +55,34 @@ public class PicktimeApiService : IPicktimeApiService
         return ParseFreeSlots(responseBody, date);
     }
 
-    public async Task<string> CreateBookingAsync(BookingRequest createBookingRequest)
+    public async Task<BookingResult> CreateBookingAsync(BookingRequest request, CancellationToken ct)
     {
-        if (createBookingRequest == null)
+        ArgumentNullException.ThrowIfNull(request);
+
+        var payload = BuildBookingPayload(request);
+        var json = JsonSerializer.Serialize(payload);
+        using var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+        HttpResponseMessage response;
+        try
         {
-            throw new ArgumentNullException(nameof(createBookingRequest));
+            response = await _httpClient.PostAsync(SaveEventPath, content, ct);
+        }
+        catch (HttpRequestException exception)
+        {
+            // The request may have reached Picktime before the connection dropped.
+            return UnknownResult($"The booking request failed with a network error: {exception.Message}");
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // HttpClient reports its own timeout as a cancellation. Only the caller's token means "stop".
+            return UnknownResult("The booking request timed out.");
         }
 
-        var payload = new
+        using (response)
         {
-            account_id = _picktimeOptions.AccountId,
-            send_sms = false,
-            location = _picktimeOptions.LocationId,
-            start_date_time = createBookingRequest.ResourceId, //202603261800
-            duration = 60,
-            cost = 0,
-            type = "resource",
-            resources = new[] { createBookingRequest.ResourceId },
-            fname = _archerOptions.FirstName,
-            lname = _archerOptions.LastName,
-            email = _archerOptions.Email,
-            timezone = ClubTimeZone
-        };
-
-        var json = JsonSerializer.Serialize(payload);
-        var content = new StringContent(json, Encoding.UTF8, "application/json");
-
-        var response = await _httpClient.PostAsync("endpoint/1.0.0/ia/save/event", content);
-        return await response.Content.ReadAsStringAsync();
+            return await ClassifyBookingResponseAsync(response, ct);
+        }
     }
 
     /// <summary>
@@ -126,6 +131,8 @@ public class PicktimeApiService : IPicktimeApiService
         try
         {
             using var response = await _httpClient.GetAsync(requestUri, ct);
+
+            ThrowIfAuthenticationFailed(response, "The availability read");
 
             if (!response.IsSuccessStatusCode)
             {
@@ -184,5 +191,113 @@ public class PicktimeApiService : IPicktimeApiService
         }
 
         return slotsResponse.Data;
+    }
+
+    /// <summary>
+    /// Composes the spec section 5.2 payload. Only the slot and the target vary per booking.
+    /// The rest comes from configuration, or is a constant in <see cref="BookingPayload"/>.
+    /// </summary>
+    private BookingPayload BuildBookingPayload(BookingRequest request)
+    {
+        return new BookingPayload
+        {
+            AccountId = _picktimeOptions.AccountId,
+            Location = _picktimeOptions.LocationId,
+            StartDateTime = request.DateTimeOfBooking,
+            Duration = BookingDurationInMinutes,
+            Type = BookingType,
+            Resources = [request.ResourceId],
+            FirstName = _archerOptions.FirstName,
+            LastName = _archerOptions.LastName,
+            Email = _archerOptions.Email,
+            Timezone = ClubTimeZone,
+        };
+    }
+
+    /// <summary>
+    /// Classifies the response as in plan section 4.1. Anything that might mean the booking exists is
+    /// <see cref="BookingResultStatus.Unknown"/>, never <see cref="BookingResultStatus.Rejected"/>,
+    /// because a rejection falls through to the next target and could book the same hour twice.
+    /// </summary>
+    private static async Task<BookingResult> ClassifyBookingResponseAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        ThrowIfAuthenticationFailed(response, "The booking request");
+
+        var statusCode = (int)response.StatusCode;
+
+        if (statusCode is >= 400 and < 500)
+        {
+            var rejectionBody = await response.Content.ReadAsStringAsync(ct);
+            var rejectionMessage = ReadRejectionMessage(rejectionBody) ?? $"The booking request returned HTTP {statusCode}.";
+
+            return new BookingResult(BookingResultStatus.Rejected, null, rejectionMessage, false);
+        }
+
+        if (!response.IsSuccessStatusCode)
+        {
+            return UnknownResult($"The booking request returned HTTP {statusCode}.");
+        }
+
+        var responseBody = await response.Content.ReadAsStringAsync(ct);
+
+        return ParseBookingResponse(responseBody);
+    }
+
+    /// <summary>
+    /// Keeps Picktime's own reason for a rejection, when the body has one.
+    /// </summary>
+    private static string? ReadRejectionMessage(string responseBody)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<BookingUnsuccessfulResponse>(responseBody)?.Message;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static BookingResult ParseBookingResponse(string responseBody)
+    {
+        BookingSuccessfulResponse? bookingResponse;
+        try
+        {
+            bookingResponse = JsonSerializer.Deserialize<BookingSuccessfulResponse>(responseBody);
+        }
+        catch (JsonException)
+        {
+            return UnknownResult("The booking response could not be parsed.");
+        }
+
+        if (bookingResponse is null)
+        {
+            return UnknownResult("The booking response was empty.");
+        }
+
+        if (!bookingResponse.Status)
+        {
+            return new BookingResult(BookingResultStatus.Rejected, null, bookingResponse.Message, false);
+        }
+
+        return new BookingResult(
+            BookingResultStatus.Succeeded,
+            bookingResponse.Data?.Id,
+            bookingResponse.Message,
+            bookingResponse.Data?.BookingEmailConfirmation ?? false);
+    }
+
+    private static BookingResult UnknownResult(string message)
+    {
+        return new BookingResult(BookingResultStatus.Unknown, null, message, false);
+    }
+
+    private static void ThrowIfAuthenticationFailed(HttpResponseMessage response, string callDescription)
+    {
+        if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+        {
+            throw new PicktimeAuthenticationException(
+                $"{callDescription} returned HTTP {(int)response.StatusCode}. Picktime rejected the scantoken.");
+        }
     }
 }

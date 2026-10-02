@@ -12,6 +12,7 @@ How to use this file
 * One task is one working session and one pull request.
 * A task that grows beyond that is split into smaller tasks here.
 * Tick a task only when every "Done when" item is true and "Verify" has passed.
+* A task that changes behaviour also needs `/code-review` with no open blockers before it is ticked.
 * Record deviations from the spec or plan in "Notes", and update that document to match.
 * The first unticked task whose dependencies are done is the next task.
 * Tasks marked (manual) are done by you, outside the code. Claude can prepare and check them.
@@ -99,7 +100,7 @@ Goal: the booking rules in spec section 6 are implemented, covered by their test
   - Verify: the standard test command
   - Notes: A body with `"status": false` is a failed read and throws `PicktimeReadException`. Plan section 3 did not list it. Approved on 2026-10-02, and plan section 3 was updated to match. Any non-success HTTP status, including a 4xx, is also a failed read. Plan section 3 listed only HTTP 5xx. Approved on 2026-10-02, and plan section 3 was updated to match. T6 splits HTTP 401 and 403 into `PicktimeAuthenticationException`. A cancelled `CancellationToken` from the caller is not a failed read: `OperationCanceledException` passes through. `HttpClient`'s own timeout is a failed read. `TimeProvider.System` is registered in `AddPicktimeServices`, for the `_` cache-buster. The response model is `SlotsResponse`, in `PicktimeAutomation.Models`. It leaves out `metadata`, which spec section 5.1 says is not read. `PicktimeReadException` is in `PicktimeAutomation.Services`, in the `Exceptions` folder. The same pull request groups the Services files into `Validators`, `Interfaces` and `Exceptions` folders, each with a matching namespace. Requested during review on 2026-10-02. It changes no behaviour. The test project now references `Microsoft.Extensions.TimeProvider.Testing`, as plan section 7.2 rule 1 names. Besides tests 19–21 and 25, the tests cover the other failed reads in plan section 3 (HTTP status, network error, timeout) and the caller's cancellation. No logging (T15) and no retries (T10).
 
-- [ ] **T6 — Fix the booking request and parse its response**
+- [x] **T6 — Fix the booking request and parse its response**
   - Refs: spec 4.1 defect 1, spec 5.2, spec 5.3, plan 2, plan 3, plan 3.1, plan 4.1, plan 4.2, plan 7.4, plan 7.6, tests 22–24, 26, 30, 32
   - Depends on: T4, T5
   - Done when:
@@ -112,7 +113,14 @@ Goal: the booking rules in spec section 6 are implemented, covered by their test
     - Response parsing has moved out of `PicktimeBookingService`. `BookingSuccessfulResponse` is kept.
     - Tests 22–24, 26, 30 and 32 pass. Test 22 is the regression test for defect 1. Test 26 covers both API calls.
   - Verify: the standard test command
-  - Notes:
+  - Notes: The wire payload is `BookingPayload`, an internal record in `PicktimeAutomation.Services` with an explicit JSON name on every field. Test 22 was shown to fail when the old 12-field payload was put back. `PicktimeAuthenticationException` is in the `Exceptions` folder. Points to record:
+    1. `BookingSuccessfulResponse.Status` is now `[JsonRequired]`. Without it, a body with no `status` would read as `false`, which is `Rejected` and falls through to the next target. Now it cannot be parsed, so it is `Unknown`.
+    2. `status: true` with no `data.id` is `Succeeded` with no booking id, because spec section 5.2 makes `status` the authority.
+    3. An HTTP 4xx keeps Picktime's `message`, read with `BookingUnsuccessfulResponse`. With no readable message, the message names the status code.
+    4. Only HTTP 401 and 403 raise `PicktimeAuthenticationException`. Plan section 4.2 also names "a token rejection message", but its shape is unknown until T13 captures one. T13 must add it if the token rejection is not a 401 or 403.
+    5. The caller's own cancellation throws `OperationCanceledException`, even after the POST was sent. Approved by the owner on 2026-10-02.
+    6. Review points left for later tasks: the full success model is deserialised strictly, so an unexpected type in `data` makes a real success `Unknown`. This is safe, because it can never cause a second booking. The raw body is not logged yet (T15). `PicktimeBookingService` still formats `start_date_time` with the current culture. T7 replaces that date code.
+    7. The shared test settings moved to `TestSettings`, with the base URL `https://picktime.invalid/`. That domain never resolves, so a test built from the real registration cannot reach Picktime.
 
 - [ ] **T7 — Booking date and season gate**
   - Refs: spec 6.2, spec 6.3, spec 6.5, plan 3, plan 3.1, plan 3.3, plan 7.2 rules 1, 3 and 4, plan 7.3, plan 7.5, tests 7, 8, 15–18
@@ -337,3 +345,4 @@ Goal: the automation is proved in production and left running.
 * 2026-10-01 — T3 — Move configuration out of source — branch `task/t3-move-config-out-of-source`
 * 2026-10-02 — T4 — Update the models — branch `task/t4-update-models`
 * 2026-10-02 — T5 — Read availability — branch `task/t5-read-availability`
+* 2026-10-02 — T6 — Fix the booking request and parse its response — branch `task/t6-fix-booking-request`

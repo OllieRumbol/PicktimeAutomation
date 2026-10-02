@@ -18,7 +18,7 @@ public sealed class ConfigurationValidationTests
     [TestMethod]
     public void AddPicktimeServices_SettingsAreValid_DoesNotThrowAndAcceptsASeasonThatWrapsTheYearEnd()
     {
-        var settings = ValidSettings();
+        var settings = TestSettings.Valid();
 
         Assert.AreEqual("10-01", settings["Booking:SeasonStart"]);
         Assert.AreEqual("03-31", settings["Booking:SeasonEnd"]);
@@ -58,7 +58,7 @@ public sealed class ConfigurationValidationTests
         string value,
         string expectedSettingInMessage)
     {
-        var settings = ValidSettings();
+        var settings = TestSettings.Valid();
         settings[key] = value;
 
         var exception = Assert.ThrowsExactly<OptionsValidationException>(() => Validate(settings));
@@ -73,7 +73,7 @@ public sealed class ConfigurationValidationTests
         string keyPrefix,
         string expectedSettingInMessage)
     {
-        var settings = ValidSettings();
+        var settings = TestSettings.Valid();
         foreach (var key in settings.Keys.Where(k => k.StartsWith(keyPrefix, StringComparison.Ordinal)).ToList())
         {
             settings.Remove(key);
@@ -87,7 +87,7 @@ public sealed class ConfigurationValidationTests
     [TestMethod]
     public void AddPicktimeServices_BookingScheduleIsMissing_StopsStartUpWithAMessageNamingTheSetting()
     {
-        var settings = ValidSettings();
+        var settings = TestSettings.Valid();
         settings.Remove("BookingSchedule");
 
         var exception = Assert.ThrowsExactly<InvalidOperationException>(() => Validate(settings));
@@ -114,32 +114,4 @@ public sealed class ConfigurationValidationTests
         _ = provider.GetRequiredService<IOptions<ArcherOptions>>().Value;
         _ = provider.GetRequiredService<IOptions<BookingOptions>>().Value;
     }
-
-    /// <summary>
-    /// Settings that pass every rule. Each test spoils exactly one of them.
-    /// The values are invented. The email address has no dot after the '@' so that the secret
-    /// scan in task T3's verify step cannot match it.
-    /// </summary>
-    private static Dictionary<string, string?> ValidSettings() => new()
-    {
-        // Any non-empty expression passes the rule, so this is deliberately not the real schedule.
-        ["BookingSchedule"] = "0 0 1 * * *",
-        ["Picktime:BaseUrl"] = "https://www.picktime.com/",
-        ["Picktime:ScanToken"] = "fake-scan-token",
-        ["Picktime:AccountId"] = "fake-account-id",
-        ["Picktime:LocationId"] = "fake-location-id",
-        ["Archer:FirstName"] = "Test",
-        ["Archer:LastName"] = "Archer",
-        ["Archer:Email"] = "archer@example",
-        ["Booking:DaysAhead"] = "7",
-        ["Booking:Hours:0"] = "17",
-        ["Booking:Hours:1"] = "18",
-        ["Booking:Hours:2"] = "19",
-        ["Booking:Targets:0:Name"] = "2b",
-        ["Booking:Targets:0:ResourceId"] = "fake-resource-2b",
-        ["Booking:Targets:1:Name"] = "3a",
-        ["Booking:Targets:1:ResourceId"] = "fake-resource-3a",
-        ["Booking:SeasonStart"] = "10-01",
-        ["Booking:SeasonEnd"] = "03-31",
-    };
 }

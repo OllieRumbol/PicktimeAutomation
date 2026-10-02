@@ -1,5 +1,4 @@
 ﻿using Microsoft.Extensions.Options;
-using System.Text.Json;
 using PicktimeAutomation.Models;
 using PicktimeAutomation.Services.Interfaces;
 
@@ -33,8 +32,9 @@ public class PicktimeBookingService : IPicktimeBookingService
             var bookingDateTime = long.Parse(futureBookingDate.ToString("yyyyMMdd") + $"{hour:00}00");
             var request = new BookingRequest(bookingDateTime, preferredTarget.ResourceId);
 
-            var raw = await _api.CreateBookingAsync(request);
-            attempts.Add(ParseBookingApiResponse(raw, hour, preferredTarget.Name));
+            // T7 adds the caller's CancellationToken to this entry point.
+            var result = await _api.CreateBookingAsync(request, CancellationToken.None);
+            attempts.Add(ToBookingAttempt(result, hour, preferredTarget.Name));
         }
 
         // Keeps the old all-or-nothing rule until T8 adds the verdict table in plan section 3.1.
@@ -48,29 +48,18 @@ public class PicktimeBookingService : IPicktimeBookingService
         };
     }
 
-    private static BookingAttempt ParseBookingApiResponse(string? raw, int hour, string targetName)
+    /// <summary>
+    /// An <see cref="BookingResultStatus.Unknown"/> result records <see cref="BookingOutcome.Unconfirmed"/>,
+    /// because the booking may exist. No other target is tried for that hour (T8 adds the fallback rules).
+    /// </summary>
+    private static BookingAttempt ToBookingAttempt(BookingResult result, int hour, string targetName)
     {
-        if (string.IsNullOrWhiteSpace(raw))
+        return result.Status switch
         {
-            return new BookingAttempt { Hour = hour, Outcome = BookingOutcome.Failed, ErrorMessage = "Empty response from API" };
-        }
-
-        try
-        {
-            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-
-            var success = JsonSerializer.Deserialize<BookingSuccessfulResponse>(raw, options);
-            if (success?.Status == true && success.Data != null)
-            {
-                return new BookingAttempt { Hour = hour, Outcome = BookingOutcome.Booked, TargetName = targetName, BookingId = success.Data.Id };
-            }
-
-            var fail = JsonSerializer.Deserialize<BookingUnsuccessfulResponse>(raw, options);
-            return new BookingAttempt { Hour = hour, Outcome = BookingOutcome.Failed, ErrorMessage = fail?.Message ?? "Unsuccessful response from API" };
-        }
-        catch (JsonException)
-        {
-            return new BookingAttempt { Hour = hour, Outcome = BookingOutcome.Failed, ErrorMessage = "Invalid JSON response" };
-        }
+            BookingResultStatus.Succeeded => new BookingAttempt { Hour = hour, Outcome = BookingOutcome.Booked, TargetName = targetName, BookingId = result.BookingId },
+            BookingResultStatus.Rejected => new BookingAttempt { Hour = hour, Outcome = BookingOutcome.Failed, ErrorMessage = result.Message },
+            BookingResultStatus.Unknown => new BookingAttempt { Hour = hour, Outcome = BookingOutcome.Unconfirmed, TargetName = targetName, ErrorMessage = result.Message },
+            _ => throw new ArgumentOutOfRangeException(nameof(result), result.Status, "Unknown booking result status."),
+        };
     }
 }
