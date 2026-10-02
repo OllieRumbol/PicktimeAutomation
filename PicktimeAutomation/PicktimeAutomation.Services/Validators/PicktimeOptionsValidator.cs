@@ -1,7 +1,7 @@
 using Microsoft.Extensions.Options;
 using PicktimeAutomation.Models;
 
-namespace PicktimeAutomation.Services;
+namespace PicktimeAutomation.Services.Validators;
 
 /// <summary>
 /// Checks the <c>Picktime</c> settings at start-up. Every message names the setting that is wrong,

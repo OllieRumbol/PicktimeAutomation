@@ -2,7 +2,7 @@ using System.Globalization;
 using Microsoft.Extensions.Options;
 using PicktimeAutomation.Models;
 
-namespace PicktimeAutomation.Services;
+namespace PicktimeAutomation.Services.Validators;
 
 /// <summary>
 /// Checks the <c>Booking</c> settings at start-up. Every message names the setting that is wrong.

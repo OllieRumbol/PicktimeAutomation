@@ -1,6 +1,6 @@
 ﻿using PicktimeAutomation.Models;
 
-namespace PicktimeAutomation.Services;
+namespace PicktimeAutomation.Services.Interfaces;
 
 public interface IPicktimeBookingService
 {
