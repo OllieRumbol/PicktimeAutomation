@@ -152,7 +152,7 @@ Goal: the booking rules in spec section 6 are implemented, covered by their test
     - The past-date check uses `LondonClock`.
     - An invalid or past `bookingDate` returns HTTP 400 with the reason, and the booking service is not called.
     - It calls the same `BookArcheryIndoorTargetAsync` as the timer.
-    - Both triggers catch and log an exception from the booking service, so the host does not crash, and write the summary event with the `Error` verdict. The HTTP trigger then returns HTTP 500 with no internal detail.
+    - Unexpected exceptions are handled by the `ExceptionHandlingMiddleware` in plan section 3, registered in `Program.cs`. It logs the exception and writes the summary event with the `Error` verdict, and for the HTTP trigger returns HTTP 500 with no internal detail. The triggers contain no try/catch.
     - The timer trigger logs `IsPastDue` and the schedule's last and next occurrence on every run.
     - The timer trigger skips a run with `IsPastDue` set: it logs a warning, writes the summary event with the `Missed` verdict, and does not call the booking service.
     - Tests 27–29 and 34 pass.

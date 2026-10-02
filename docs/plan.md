@@ -138,7 +138,17 @@ That placement is deliberate. If the trigger computed the date, the date rule �
 
 **The timer trigger** logs `TimerInfo.IsPastDue` and the schedule's last and next occurrence on every run, so a wrong value is visible from the first scheduled run. If `IsPastDue` is set, the run was missed and has started late, so the trigger does not call the booking service, as spec section 6.1 requires. It logs a warning, and writes the summary event with the `Missed` verdict (section 3.1). Working out the date from the missed occurrence's scheduled time was rejected: it needs the timer's schedule status, which is fiddly and hard to test. Skipping is safe: the worst case is a warning and a manual catch-up, never a wrong booking. A run that is only a little late on the same day is also skipped.
 
-**The HTTP trigger** reads `bookingDate` from the query string only, as spec section 6.7 requires. It checks the date before calling the booking service. It returns the `BookingSummary` as JSON with HTTP 200, HTTP 400 for an invalid or past date, and HTTP 500 for an unexpected error (section 4.2). On an unexpected error, both triggers write the summary event with the `Error` verdict before they return.
+**The HTTP trigger** reads `bookingDate` from the query string only, as spec section 6.7 requires. It checks the date before calling the booking service. It returns the `BookingSummary` as JSON with HTTP 200, and HTTP 400 for an invalid or past date. An unexpected error is handled by the exception middleware below.
+
+**Unexpected errors are handled in one place:** an `ExceptionHandlingMiddleware`, registered in `Program.cs` with `UseMiddleware`, wraps every function. When a function throws, it:
+
+1. Logs the exception at error level.
+2. Writes the summary event with the `Error` verdict (section 3.1), through `BookingLoggingExtensions`. The booking date is left empty, because the middleware does not know it.
+3. For an HTTP function, returns HTTP 500 with the short message in section 4.2, and no internal detail.
+
+The triggers contain no try/catch, so they stay thin adapters, and a function added later is covered with no extra code. Note that in the isolated worker model an unhandled exception fails one run, not the host. The middleware exists for the run record and the safe HTTP response, not to keep the host alive.
+
+A try/catch in each trigger was rejected: it repeats the same handling in two places, and the owner's C# standard says to handle unexpected exceptions in one place, which for Azure Functions is a worker middleware.
 
 **`LondonClock`** is one small injected class with `DateOnly Today()`. It is built on the injected `TimeProvider` and the constant `Europe/London`, resolved with `TimeZoneInfo.FindSystemTimeZoneById`. The booking service uses it for the default booking date, and the HTTP trigger uses it for the past-date check. So the date rule stays in one place (section 7.2, rule 3), and both uses are testable with `FakeTimeProvider`.
 
@@ -183,7 +193,7 @@ public enum RunVerdict { Success, Partial, Failure, Skipped, AuthenticationFaile
 | `Failure` | No hour is `Booked` or `Unconfirmed`. |
 | `Skipped` | The booking date is outside the season. No hours are attempted. |
 | `Missed` | A late timer run (section 3). The booking service is not called, and the booking date is left empty. |
-| `Error` | A trigger caught an unexpected exception (section 4.2). The booking date is filled in when it is known. |
+| `Error` | The exception middleware (section 3) caught an unexpected exception. The booking date is left empty. |
 
 A skipped run still returns a `BookingSummary`, with zero counts, and still writes the summary event in section 5.3. So it appears in the section 5.4 query like any other run, as spec section 6.5 requires. The HTTP trigger returns it with HTTP 200. `Missed` and `Error` runs also write the summary event, so every run appears in the query, whatever its outcome.
 
@@ -288,7 +298,7 @@ An HTTP-triggered function must respond within 230 seconds, whatever `functionTi
 | An availability read fails after retries | The API client throws `PicktimeReadException`. The booking service handles it as in section 3, which meets spec section 6.4. |
 | An hour throws unexpectedly | Catch, record `Failed`, and continue to the next hour. This meets spec section 6.5. |
 | Invalid or past `bookingDate` on the HTTP trigger | Return HTTP 400 with the reason, and do not call the booking service. This meets spec section 6.7. |
-| Unexpected error on the HTTP trigger | Log the exception, and return HTTP 500 with a short message: "The booking run failed. See the logs." No stack trace or internal detail is returned. This meets spec section 6.7. |
+| Unexpected error in any function | Handled by the exception middleware (section 3): it logs the exception and writes the `Error` summary event. For the HTTP trigger it returns HTTP 500 with a short message: "The booking run failed. See the logs." No stack trace or internal detail is returned. This meets spec section 6.7. |
 
 **Accepted risk: a manual run at the same time as a scheduled run.** Two runs in parallel could both see an hour as free and both book it. Guarding against it would need a lock shared between runs. It is accepted instead, because only one person uses the manual trigger. Spec section 9 records this as the one accepted exception, with its rule: do not run the manual trigger around 00:05 on a run day.
 
@@ -344,9 +354,9 @@ After the first run in Azure, confirm that the Invocations view shows data with 
 1. **Start** — the times and booking date required by spec section 6.2, and the season gate result required by spec section 6.3.
 2. **Availability** — the free hours found for each target.
 3. **Each attempt** — hour, target name, outcome, the booking id on success, and `booking_email_confirmation`.
-4. **Summary** — one event, described below. It is written for every run, whatever the outcome: by the booking service for a normal or skipped run, and by the triggers for a `Missed` or `Error` run (section 3.1). So no run is silent, as spec section 5.3 requires.
+4. **Summary** — one event, described below. It is written for every run, whatever the outcome: by the booking service for a normal or skipped run, by the timer trigger for a `Missed` run, and by the exception middleware for an `Error` run (section 3). So no run is silent, as spec section 5.3 requires.
 
-Use structured logging with named placeholders throughout, so values land in `customDimensions` and are queryable. Keep `BookingLoggingExtensions` as the single place summaries are written. The triggers call it too.
+Use structured logging with named placeholders throughout, so values land in `customDimensions` and are queryable. Keep `BookingLoggingExtensions` as the single place summaries are written. The timer trigger and the exception middleware call it too.
 
 **The summary is one event with named properties**, not a sentence of interpolated text. That is what makes the dashboard query below possible:
 
@@ -422,7 +432,7 @@ Keep MSTest, which both test projects already use. Replace the `Test1.cs` placeh
 
 Every test below exists because it catches a specific defect, and each is listed with the defect it catches. If a test cannot be justified that way, it does not get written. Consequences worth stating plainly:
 
-* Thin adapters are not tested for being thin. The two Azure Function triggers hold no logic beyond two small checks (the HTTP trigger's input check and the timer's late-run check), so they get four tests between them, not a suite.
+* Thin adapters are not tested for being thin. The two Azure Function triggers hold no logic beyond two small checks (the HTTP trigger's input check and the timer's late-run check), and the exception middleware has one job. Together they get four tests, not a suite.
 * No test asserts a property getter, a constructor, or that a mock was called in a particular order.
 * If `PicktimeAutomation.AzureFunctionsTests` ends up with nothing worth asserting, delete the project rather than pad it.
 
@@ -502,11 +512,11 @@ Not tested: that the token is never written to a log. Asserting the absence of a
 
 ### 7.7 Function triggers — `PicktimeAutomation.AzureFunctionsTests`
 
-Four tests, deliberately. Both triggers are thin adapters. The only logic is the HTTP trigger's input check and the timer's late-run check, so there is nothing else here worth asserting.
+Four tests, deliberately. Both triggers are thin adapters. The only logic is the HTTP trigger's input check, the timer's late-run check and the exception middleware, so there is nothing else here worth asserting.
 
 | # | Test | Defect it catches |
 | --- | --- | --- |
-| 27 | An exception from the booking service is caught and logged by both triggers, so the Function does not crash the host. Both write the summary event with the `Error` verdict, and the HTTP trigger returns 500 with no internal detail. | A thrown exception taking down the host and losing the log record of why, a crashed run missing from the run record, or a stack trace leaked to the caller |
+| 27 | The exception middleware, given a function that throws, logs the exception and writes the summary event with the `Error` verdict. For an HTTP function it returns 500 with no internal detail. The test uses a fake `FunctionContext`. | A crashed run missing from the run record, a stack trace leaked to the caller, or a function left without error handling |
 | 28 | The HTTP trigger passes a supplied date through unchanged, and returns the run summary as JSON | The manual trigger behaving differently from the scheduled one |
 | 29 | A malformed or past `bookingDate` returns 400, and the booking service is not called. Today is accepted, including at 00:30 London in BST, when the UTC date is still the day before. | A typo in a manual run books the wrong day, or crashes, or a valid same-day run is rejected near midnight |
 | 34 | A timer run with `IsPastDue` set does not call the booking service, logs a warning, and writes the summary event with the `Missed` verdict | A late run books a day that was never scheduled, or a missed night leaves no record |
