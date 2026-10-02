@@ -7,7 +7,7 @@ public sealed class BookingAttempt
 {
     public int Hour { get; init; }
 
-    public BookingOutcome Outcome { get; init; }
+    public required BookingOutcome Outcome { get; init; }
 
     /// <summary>Set when <see cref="BookingOutcome.Booked"/> or <see cref="BookingOutcome.Unconfirmed"/>.</summary>
     public string? TargetName { get; init; }
