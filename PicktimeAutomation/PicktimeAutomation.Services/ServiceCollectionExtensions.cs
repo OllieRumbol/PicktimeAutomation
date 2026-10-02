@@ -28,6 +28,8 @@ public static class ServiceCollectionExtensions
         AddValidatedOptions<ArcherOptions, ArcherOptionsValidator>(services, configuration, ArcherOptions.SectionName);
         AddValidatedOptions<BookingOptions, BookingOptionsValidator>(services, configuration, BookingOptions.SectionName);
 
+        services.AddSingleton(TimeProvider.System);
+
         services.AddHttpClient<IPicktimeApiService, PicktimeApiService>((serviceProvider, client) =>
         {
             var picktime = serviceProvider.GetRequiredService<IOptions<PicktimeOptions>>().Value;

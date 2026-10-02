@@ -3,7 +3,7 @@
 > **What this document is for:** It answers *how will we build it?* It turns the requirements in `spec.md` into a technical design, and it is agreed before any code is written.
 
 Status: Approved
-Last updated: 2026-09-30
+Last updated: 2026-10-02
 
 This document is the record of design decisions for this project. It says how the requirements in spec.md are met, and why that way. It does not restate requirements: it refers to them by section, such as "spec section 6.2". It was split out of spec.md on 2026-09-29. Keep it updated as decisions change.
 
@@ -115,7 +115,7 @@ Two changes of note against the current code:
 1. `CreateBookingAsync` returns a parsed result rather than a raw `string`. Response parsing belongs with the client that knows the wire format, not in the booking rules. This moves `ParseBookingApiResponse` out of `PicktimeBookingService`.
 2. Both methods take a `CancellationToken`, which the Functions host supplies.
 
-**How `GetAvailableSlotsAsync` reports a failed read.** An empty list means the target is fully booked. A read that fails, after its retries, throws `PicktimeReadException`. That covers a network error, a timeout, an HTTP 5xx, or a body that cannot be parsed. So a failed read can never be mistaken for a fully booked day, as spec section 6.4 requires. The booking service catches the exception, logs a warning naming the target, treats the target as having no free hours, and adds the target's name to `BookingSummary.FailedReads` (section 3.1). This matches how an authentication failure is reported, with `PicktimeAuthenticationException`.
+**How `GetAvailableSlotsAsync` reports a failed read.** An empty list means the target is fully booked. A read that fails, after its retries, throws `PicktimeReadException`. That covers a network error, a timeout, an HTTP 5xx, a body that cannot be parsed, or a body with `"status": false`. So a failed read can never be mistaken for a fully booked day, as spec section 6.4 requires. The booking service catches the exception, logs a warning naming the target, treats the target as having no free hours, and adds the target's name to `BookingSummary.FailedReads` (section 3.1). This matches how an authentication failure is reported, with `PicktimeAuthenticationException`.
 
 `IPicktimeBookingService` keeps one entry point. The booking date is optional:
 
