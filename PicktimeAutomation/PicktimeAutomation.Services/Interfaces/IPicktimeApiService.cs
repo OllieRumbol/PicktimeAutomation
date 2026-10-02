@@ -1,6 +1,7 @@
 ﻿using PicktimeAutomation.Models;
+using PicktimeAutomation.Services.Exceptions;
 
-namespace PicktimeAutomation.Services;
+namespace PicktimeAutomation.Services.Interfaces;
 
 public interface IPicktimeApiService
 {

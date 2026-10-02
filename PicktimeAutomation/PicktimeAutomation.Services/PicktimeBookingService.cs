@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Options;
 using System.Text.Json;
 using PicktimeAutomation.Models;
+using PicktimeAutomation.Services.Interfaces;
 
 namespace PicktimeAutomation.Services;
 

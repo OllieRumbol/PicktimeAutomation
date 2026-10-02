@@ -1,4 +1,4 @@
-namespace PicktimeAutomation.Services;
+namespace PicktimeAutomation.Services.Exceptions;
 
 /// <summary>
 /// An availability read failed, so the free slots are not known (plan section 3).

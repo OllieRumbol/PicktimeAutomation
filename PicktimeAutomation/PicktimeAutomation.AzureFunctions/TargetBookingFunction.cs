@@ -1,7 +1,7 @@
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using PicktimeAutomation.AzureFunctions.Extensions;
-using PicktimeAutomation.Services;
+using PicktimeAutomation.Services.Interfaces;
 
 namespace PicktimeAutomation.AzureFunctions;
 

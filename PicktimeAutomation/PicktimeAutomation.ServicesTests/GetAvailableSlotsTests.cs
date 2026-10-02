@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using PicktimeAutomation.Models;
 using PicktimeAutomation.Services;
+using PicktimeAutomation.Services.Exceptions;
 
 namespace PicktimeAutomation.ServicesTests;
 
