@@ -2,7 +2,7 @@
 
 > **What this document is for:** It answers *what do we do next?* It splits the approved design into small, verifiable steps and tracks progress against them.
 
-Last updated: 2026-10-02
+Last updated: 2026-10-03
 
 <!--
 How to use this file
@@ -122,7 +122,7 @@ Goal: the booking rules in spec section 6 are implemented, covered by their test
     6. Review points left for later tasks: the full success model is deserialised strictly, so an unexpected type in `data` makes a real success `Unknown`. This is safe, because it can never cause a second booking. The raw body is not logged yet (T15). `PicktimeBookingService` still formats `start_date_time` with the current culture. T7 replaces that date code.
     7. The shared test settings moved to `TestSettings`, with the base URL `https://picktime.invalid/`. That domain never resolves, so a test built from the real registration cannot reach Picktime.
 
-- [ ] **T7 — Booking date and season gate**
+- [x] **T7 — Booking date and season gate**
   - Refs: spec 6.2, spec 6.3, spec 6.5, plan 3, plan 3.1, plan 3.3, plan 7.2 rules 1, 3 and 4, plan 7.3, plan 7.5, tests 7, 8, 15–18
   - Depends on: T3, T4
   - Done when:
@@ -134,7 +134,7 @@ Goal: the booking rules in spec section 6 are implemented, covered by their test
     - The timer trigger calls the new entry point with no date, so the solution still builds.
     - Tests 7, 8 and 15–18 pass.
   - Verify: the standard test command
-  - Notes:
+  - Notes: `SeasonGate.IsInSeason(date, seasonStart, seasonEnd)` is a public static pure function in `PicktimeAutomation.Services`. It takes the two settings as arguments, so it reads no configuration. All four worked examples in spec section 6.3 agree with the rule, and each is a test that runs the service at 00:05 London time. `LondonClock` is registered as a singleton. It looks up `Europe/London` in its constructor, not in a static field, after review. The Picktime timestamp is built in one internal helper, `PicktimeTimestamp`, with the invariant culture. `PicktimeApiService` now uses it for the slots request too, which changes no behaviour. A test shows that a Thai Buddhist culture still sends a Gregorian timestamp. The tests give `FakeTimeProvider` the UTC instant, with a zero offset, as `TimeProvider.System` does. With a `+01:00` start time, `GetLocalNow()` returns the time unchanged, and tests 15 and 17 passed against a clock that used the host time zone. With the fix, a host-clock bug fails tests 15, 17 and 18 and the two BST worked examples. Review points left for later tasks: (1) the timer trigger passes no `CancellationToken` yet. T9 adds it when it finishes the triggers. (2) `FakePicktimeApiService` returns no free slots, because the interim loop does not read availability. T8 must make the free slots configurable, or the date tests fail for reasons that have nothing to do with the date. (3) A skipped run does not yet log the booking date or the reason, which spec sections 6.2 and 6.3 require. T15 adds it. (4) `SeasonGate` repeats the `MM-dd` parse in `BookingOptionsValidator`. This was left, because the validator checks the format at start-up.
 
 - [ ] **T8 — Rewrite the booking service**
   - Refs: spec 4.1 defects 2 and 3, spec 5.3, spec 6.4, spec 6.5, spec 6.6, plan 3, plan 3.1, plan 3.4, plan 4.2, plan 7.3, tests 1–6, 9–11, 31
@@ -346,3 +346,4 @@ Goal: the automation is proved in production and left running.
 * 2026-10-02 — T4 — Update the models — branch `task/t4-update-models`
 * 2026-10-02 — T5 — Read availability — branch `task/t5-read-availability`
 * 2026-10-02 — T6 — Fix the booking request and parse its response — branch `task/t6-fix-booking-request`
+* 2026-10-03 — T7 — Booking date and season gate — branch `task/t7-booking-date-season-gate`
