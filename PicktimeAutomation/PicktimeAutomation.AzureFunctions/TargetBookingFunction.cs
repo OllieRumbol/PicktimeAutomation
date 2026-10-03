@@ -23,7 +23,7 @@ public class TargetBookingFunction
 
         try
         {
-            var summary = await _bookingService.BookArcheryIndoorTarget();
+            var summary = await _bookingService.BookArcheryIndoorTargetAsync();
             _logger.LogBookingSummary(summary);
         }
         catch (Exception ex)

@@ -31,6 +31,7 @@ public static class ServiceCollectionExtensions
         AddValidatedOptions<BookingOptions, BookingOptionsValidator>(services, configuration, BookingOptions.SectionName);
 
         services.AddSingleton(TimeProvider.System);
+        services.AddSingleton<LondonClock>();
 
         services.AddHttpClient<IPicktimeApiService, PicktimeApiService>((serviceProvider, client) =>
         {
