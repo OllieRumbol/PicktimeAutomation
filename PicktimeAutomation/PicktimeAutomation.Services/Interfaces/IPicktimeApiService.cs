@@ -10,7 +10,14 @@ public interface IPicktimeApiService
     /// An empty list means the target is fully booked.
     /// </summary>
     /// <exception cref="PicktimeReadException">The read failed, so the free slots are not known.</exception>
+    /// <exception cref="PicktimeAuthenticationException">Picktime rejected the token.</exception>
     Task<IReadOnlyList<long>> GetAvailableSlotsAsync(string resourceId, DateOnly date, CancellationToken ct);
 
-    Task<string> CreateBookingAsync(BookingRequest createBookingRequest);
+    /// <summary>
+    /// Sends one booking request. The result is <see cref="BookingResultStatus.Unknown"/> whenever the
+    /// booking may exist but was not confirmed (plan section 4.1). The request is never retried.
+    /// The one exception is the caller's own cancellation, which throws <see cref="OperationCanceledException"/>.
+    /// </summary>
+    /// <exception cref="PicktimeAuthenticationException">Picktime rejected the token.</exception>
+    Task<BookingResult> CreateBookingAsync(BookingRequest request, CancellationToken ct);
 }
