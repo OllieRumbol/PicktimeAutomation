@@ -1,6 +1,6 @@
 using System.Globalization;
 
-namespace PicktimeAutomation.Services;
+namespace PicktimeAutomation.Services.Dates;
 
 /// <summary>
 /// Picktime writes a date and time as a number in the form <c>yyyyMMddHHmm</c>, in London time.

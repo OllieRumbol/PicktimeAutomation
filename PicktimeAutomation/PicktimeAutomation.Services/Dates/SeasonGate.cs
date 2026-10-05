@@ -1,6 +1,6 @@
 using System.Globalization;
 
-namespace PicktimeAutomation.Services;
+namespace PicktimeAutomation.Services.Dates;
 
 /// <summary>
 /// The season rule in spec section 6.3. It is a pure function of its arguments, so its test is a table of dates.

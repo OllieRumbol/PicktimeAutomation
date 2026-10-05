@@ -1,4 +1,4 @@
-namespace PicktimeAutomation.Services;
+namespace PicktimeAutomation.Services.Dates;
 
 /// <summary>
 /// Today's date in London. The host clock is UTC, and during British Summer Time London midnight
