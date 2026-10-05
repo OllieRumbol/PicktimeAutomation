@@ -3,6 +3,7 @@ using PicktimeAutomation.Models;
 using PicktimeAutomation.Services.Dates;
 using PicktimeAutomation.Services.Exceptions;
 using PicktimeAutomation.Services.Interfaces;
+using Polly;
 using System.Globalization;
 using System.Net;
 using System.Text;
@@ -24,23 +25,29 @@ public class PicktimeApiService : IPicktimeApiService
 
     private const string BookingType = "resource";
 
-    private readonly HttpClient _httpClient;
+    private readonly HttpClient _readClient;
+    private readonly HttpClient _bookingClient;
     private readonly PicktimeOptions _picktimeOptions;
     private readonly ArcherOptions _archerOptions;
     private readonly TimeProvider _timeProvider;
 
+    /// <param name="readClient">Sends the availability <c>GET</c>. It may retry, because a read is safe to repeat.</param>
+    /// <param name="bookingClient">Sends the booking <c>POST</c>. It must never retry (plan section 4.1).</param>
     public PicktimeApiService(
-        HttpClient httpClient,
+        HttpClient readClient,
+        HttpClient bookingClient,
         IOptions<PicktimeOptions> picktimeOptions,
         IOptions<ArcherOptions> archerOptions,
         TimeProvider timeProvider)
     {
-        ArgumentNullException.ThrowIfNull(httpClient);
+        ArgumentNullException.ThrowIfNull(readClient);
+        ArgumentNullException.ThrowIfNull(bookingClient);
         ArgumentNullException.ThrowIfNull(picktimeOptions);
         ArgumentNullException.ThrowIfNull(archerOptions);
         ArgumentNullException.ThrowIfNull(timeProvider);
 
-        _httpClient = httpClient;
+        _readClient = readClient;
+        _bookingClient = bookingClient;
         _picktimeOptions = picktimeOptions.Value;
         _archerOptions = archerOptions.Value;
         _timeProvider = timeProvider;
@@ -67,7 +74,7 @@ public class PicktimeApiService : IPicktimeApiService
         HttpResponseMessage response;
         try
         {
-            response = await _httpClient.PostAsync(SaveEventPath, content, ct);
+            response = await _bookingClient.PostAsync(SaveEventPath, content, ct);
         }
         catch (HttpRequestException exception)
         {
@@ -123,7 +130,7 @@ public class PicktimeApiService : IPicktimeApiService
     {
         try
         {
-            using var response = await _httpClient.GetAsync(requestUri, ct);
+            using var response = await _readClient.GetAsync(requestUri, ct);
 
             ThrowIfAuthenticationFailed(response, "The availability read");
 
@@ -142,9 +149,17 @@ public class PicktimeApiService : IPicktimeApiService
         }
         catch (OperationCanceledException exception) when (!ct.IsCancellationRequested)
         {
-            // HttpClient reports its own timeout as a cancellation. Only the caller's token means "stop".
+            // HttpClient reports its own timeout as a cancellation. It still applies while the body downloads,
+            // after the resilience handler has returned. Only the caller's token means "stop".
             throw new PicktimeReadException(
                 $"The availability read for {date:yyyy-MM-dd} timed out.", exception);
+        }
+        catch (ExecutionRejectedException exception)
+        {
+            // The resilience handler stopped the read: an attempt or the whole read ran out of time,
+            // or the circuit breaker or the rate limiter rejected it.
+            throw new PicktimeReadException(
+                $"The availability read for {date:yyyy-MM-dd} was stopped by the resilience handler: {exception.Message}", exception);
         }
     }
 

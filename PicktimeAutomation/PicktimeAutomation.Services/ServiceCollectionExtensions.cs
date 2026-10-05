@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Http.Resilience;
 using Microsoft.Extensions.Options;
 using PicktimeAutomation.Models;
 using PicktimeAutomation.Services.Dates;
@@ -20,6 +21,21 @@ public static class ServiceCollectionExtensions
     /// </summary>
     public const string BookingScheduleSettingName = "BookingSchedule";
 
+    /// <summary>
+    /// The client for the availability <c>GET</c>. It is safe to repeat, so it retries (plan section 4.1).
+    /// </summary>
+    public const string ReadClientName = "PicktimeRead";
+
+    /// <summary>
+    /// The client for the booking <c>POST</c>. It is not idempotent, so it never retries (plan section 4.1).
+    /// </summary>
+    public const string BookingClientName = "PicktimeBooking";
+
+    /// <summary>
+    /// About 5 times the measured booking time. A booking that takes longer is <c>Unknown</c> (plan section 4.1).
+    /// </summary>
+    public static readonly TimeSpan BookingTimeout = TimeSpan.FromSeconds(20);
+
     public static IServiceCollection AddPicktimeServices(this IServiceCollection services, IConfiguration configuration)
     {
         ArgumentNullException.ThrowIfNull(services);
@@ -35,17 +51,49 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<LondonClock>();
         services.AddSingleton(serviceProvider => new LateRunWindow(serviceProvider.GetRequiredService<LondonClock>(), bookingSchedule));
 
-        services.AddHttpClient<IPicktimeApiService, PicktimeApiService>((serviceProvider, client) =>
-        {
-            var picktime = serviceProvider.GetRequiredService<IOptions<PicktimeOptions>>().Value;
-
-            client.BaseAddress = new Uri(picktime.BaseUrl);
-            client.DefaultRequestHeaders.Add("scantoken", picktime.ScanToken);
-        });
+        AddPicktimeApiClients(services);
 
         services.AddTransient<IPicktimeBookingService, PicktimeBookingService>();
 
         return services;
+    }
+
+    /// <summary>
+    /// Two clients, so that the retry policy on the read can never reach the booking request.
+    /// A retried booking can book the same slot twice (plan section 4.1).
+    /// </summary>
+    private static void AddPicktimeApiClients(IServiceCollection services)
+    {
+        // The standard handler's defaults are the plan: up to 3 retries from 2 seconds, 10 seconds per attempt,
+        // 30 in total. A POST sent through this client by mistake is still never retried.
+        services.AddHttpClient(ReadClientName, ConfigurePicktimeClient)
+            .AddStandardResilienceHandler(options => options.Retry.DisableForUnsafeHttpMethods());
+
+        services.AddHttpClient(BookingClientName, (serviceProvider, client) =>
+        {
+            ConfigurePicktimeClient(serviceProvider, client);
+            client.Timeout = BookingTimeout;
+        });
+
+        services.AddTransient<IPicktimeApiService>(serviceProvider =>
+        {
+            var httpClientFactory = serviceProvider.GetRequiredService<IHttpClientFactory>();
+
+            return new PicktimeApiService(
+                readClient: httpClientFactory.CreateClient(ReadClientName),
+                bookingClient: httpClientFactory.CreateClient(BookingClientName),
+                serviceProvider.GetRequiredService<IOptions<PicktimeOptions>>(),
+                serviceProvider.GetRequiredService<IOptions<ArcherOptions>>(),
+                serviceProvider.GetRequiredService<TimeProvider>());
+        });
+    }
+
+    private static void ConfigurePicktimeClient(IServiceProvider serviceProvider, HttpClient client)
+    {
+        var picktime = serviceProvider.GetRequiredService<IOptions<PicktimeOptions>>().Value;
+
+        client.BaseAddress = new Uri(picktime.BaseUrl);
+        client.DefaultRequestHeaders.Add("scantoken", picktime.ScanToken);
     }
 
     private static void AddValidatedOptions<TOptions, TValidator>(

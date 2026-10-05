@@ -206,8 +206,10 @@ public sealed class GetAvailableSlotsTests
             LocationId = LocationId,
         });
 
+        // These tests send only the availability read, so one client can stand in for both.
         return new PicktimeApiService(
-            httpClient,
+            readClient: httpClient,
+            bookingClient: httpClient,
             picktimeOptions,
             Options.Create(new ArcherOptions()),
             new FakeTimeProvider(Now));
