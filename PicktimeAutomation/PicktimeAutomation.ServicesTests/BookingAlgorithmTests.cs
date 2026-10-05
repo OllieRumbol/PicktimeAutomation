@@ -10,14 +10,17 @@ using PicktimeAutomation.Services.Exceptions;
 namespace PicktimeAutomation.ServicesTests;
 
 /// <summary>
-/// Tests 1 to 6, 9 to 11 and 31 (plan section 7.3), for the booking algorithm in spec section 6.4
-/// and the verdict table in plan section 3.1. The booking date is passed in, so the clock plays no part.
+/// Tests 1 to 6, 9 to 11 and 31 (plan section 7.3), and tests 12 to 14 for unknown booking results
+/// (plan section 7.4), for the booking algorithm in spec section 6.4 and the verdict table in plan section 3.1.
+/// The booking date is passed in, so the clock plays no part.
 /// </summary>
 [TestClass]
 public sealed class BookingAlgorithmTests
 {
     private const string Target2b = "fake-resource-2b";
     private const string Target3a = "fake-resource-3a";
+    private const long Slot17 = 202610131700;
+    private const long Slot18 = 202610131800;
 
     // Tuesday 13 October 2026, inside the season.
     private static readonly DateOnly BookingDate = new(2026, 10, 13);
@@ -193,7 +196,8 @@ public sealed class BookingAlgorithmTests
                 api.WithBookingResults(Target2b, 18, FakePicktimeApiService.Rejected());
                 break;
             case BookingOutcome.Unconfirmed:
-                api.WithBookingResults(Target2b, 18, FakePicktimeApiService.Unknown());
+                api.WithBookingResults(Target2b, 18, FakePicktimeApiService.Unknown())
+                    .WithFreeHoursOnReRead(Target2b, 19);
                 break;
         }
 
@@ -219,24 +223,189 @@ public sealed class BookingAlgorithmTests
         Assert.AreEqual(RunVerdict.Failure, summary.Verdict);
     }
 
-    // T8's interim rule for an unknown result. T11 replaces it with the re-read in spec section 6.4.
+    // Test 12
     [TestMethod]
-    public async Task BookArcheryIndoorTargetAsync_UnknownResult_RecordsUnconfirmedAndDoesNotTry3a()
+    public async Task BookArcheryIndoorTargetAsync_UnknownResultAndHourGoneOnReRead_RecordsUnconfirmedAndBooksNothingMore()
     {
         var api = new FakePicktimeApiService()
             .WithFreeHours(Target2b, 17, 18, 19)
             .WithFreeHours(Target3a, 17, 18, 19)
-            .WithBookingResults(Target2b, 18, FakePicktimeApiService.Unknown());
+            .WithBookingResults(Target2b, 18, FakePicktimeApiService.Unknown())
+            .WithFreeHoursOnReRead(Target2b, 19);
+
+        var summary = await CreateService(api).BookArcheryIndoorTargetAsync(BookingDate);
+
+        AssertUnconfirmedOn2b(summary, 18);
+        AssertReReadOf2b(api);
+        CollectionAssert.AreEqual(new[] { (Target2b, Slot18) }, BookingCallsAt(api, Slot18));
+        CollectionAssert.AreEqual(new[] { "2b" }, WarningTargetNames());
+        Assert.AreEqual(RunVerdict.Partial, summary.Verdict);
+    }
+
+    // Test 13
+    [TestMethod]
+    public async Task BookArcheryIndoorTargetAsync_UnknownResultAndHourStillFree_BooksOnTheSameTargetWithOneMoreAttempt()
+    {
+        var api = new FakePicktimeApiService()
+            .WithFreeHours(Target2b, 17, 18, 19)
+            .WithFreeHours(Target3a, 17, 18, 19)
+            .WithBookingResults(Target2b, 18, FakePicktimeApiService.Unknown(), FakePicktimeApiService.Succeeded());
 
         var summary = await CreateService(api).BookArcheryIndoorTargetAsync(BookingDate);
 
         var hour18 = AttemptAt(summary, 18);
-        Assert.AreEqual(BookingOutcome.Unconfirmed, hour18.Outcome);
+        Assert.AreEqual(BookingOutcome.Booked, hour18.Outcome);
         Assert.AreEqual("2b", hour18.TargetName);
-        CollectionAssert.AreEqual(
-            new[] { (Target2b, 202610131800L) },
-            BookingCalls(api).Where(call => call.Slot == 202610131800).ToArray());
+        Assert.AreEqual(FakePicktimeApiService.BookingId, hour18.BookingId);
+        AssertReReadOf2b(api);
+        CollectionAssert.AreEqual(new[] { (Target2b, Slot18), (Target2b, Slot18) }, BookingCallsAt(api, Slot18));
+        Assert.AreEqual(RunVerdict.Success, summary.Verdict);
+    }
+
+    // Test 14 (Unknown), and rule a in spec section 6.4 (Rejected): Picktime may now show the first
+    // request's booking, so a rejection proves nothing.
+    [TestMethod]
+    [DataRow(BookingResultStatus.Unknown)]
+    [DataRow(BookingResultStatus.Rejected)]
+    public async Task BookArcheryIndoorTargetAsync_UnknownResultThenNotBooked_RecordsUnconfirmedWithNoThirdAttempt(BookingResultStatus secondStatus)
+    {
+        var secondResult = secondStatus == BookingResultStatus.Unknown
+            ? FakePicktimeApiService.Unknown()
+            : FakePicktimeApiService.Rejected();
+        var api = new FakePicktimeApiService()
+            .WithFreeHours(Target2b, 17, 18, 19)
+            .WithFreeHours(Target3a, 17, 18, 19)
+            .WithBookingResults(Target2b, 18, FakePicktimeApiService.Unknown(), secondResult);
+
+        var summary = await CreateService(api).BookArcheryIndoorTargetAsync(BookingDate);
+
+        AssertUnconfirmedOn2b(summary, 18);
+        CollectionAssert.AreEqual(new[] { (Target2b, Slot18), (Target2b, Slot18) }, BookingCallsAt(api, Slot18));
         CollectionAssert.AreEqual(new[] { "2b" }, WarningTargetNames());
+        StringAssert.Contains(AttemptAt(summary, 18).ErrorMessage, "The first booking result was unknown.");
+    }
+
+    // The re-read and the second attempt go to the target that gave the unknown result, here the fallback.
+    [TestMethod]
+    public async Task BookArcheryIndoorTargetAsync_UnknownResultOn3a_ReReadsAndBooks3aOnly()
+    {
+        var api = new FakePicktimeApiService()
+            .WithFreeHours(Target2b, 17, 18, 19)
+            .WithFreeHours(Target3a, 17, 18, 19)
+            .WithBookingResults(Target2b, 18, FakePicktimeApiService.Rejected())
+            .WithBookingResults(Target3a, 18, FakePicktimeApiService.Unknown(), FakePicktimeApiService.Succeeded());
+
+        var summary = await CreateService(api).BookArcheryIndoorTargetAsync(BookingDate);
+
+        var hour18 = AttemptAt(summary, 18);
+        Assert.AreEqual(BookingOutcome.Booked, hour18.Outcome);
+        Assert.AreEqual("3a", hour18.TargetName);
+        Assert.HasCount(3, api.AvailabilityReads);
+        Assert.AreEqual(Target3a, api.AvailabilityReads[2]);
+        CollectionAssert.AreEqual(
+            new[] { (Target2b, Slot18), (Target3a, Slot18), (Target3a, Slot18) },
+            BookingCallsAt(api, Slot18));
+    }
+
+    // Rule b in spec section 6.4: the hour stays unconfirmed, and the rejected token stops the run.
+    [TestMethod]
+    public async Task BookArcheryIndoorTargetAsync_ReReadRejectsTheToken_RecordsUnconfirmedAndStops()
+    {
+        var api = new FakePicktimeApiService()
+            .WithFreeHours(Target2b, 17, 18, 19)
+            .WithFreeHours(Target3a, 17, 18, 19)
+            .WithBookingResults(Target2b, 18, FakePicktimeApiService.Unknown())
+            .WithReReadException(Target2b, new PicktimeAuthenticationException("The availability read returned HTTP 401."));
+
+        var summary = await CreateService(api).BookArcheryIndoorTargetAsync(BookingDate);
+
+        Assert.AreEqual(RunVerdict.AuthenticationFailed, summary.Verdict);
+        Assert.AreEqual(BookingOutcome.Booked, OutcomeAt(summary, 17));
+        AssertUnconfirmedOn2b(summary, 18);
+        AssertFailedForAuthentication(summary, 19);
+        CollectionAssert.AreEqual(new[] { (Target2b, Slot17), (Target2b, Slot18) }, BookingCalls(api));
+        CollectionAssert.AreEqual(new[] { "2b" }, WarningTargetNames());
+    }
+
+    // A second booking request rejected for the token is handled the same way as rule b.
+    [TestMethod]
+    public async Task BookArcheryIndoorTargetAsync_SecondAttemptRejectsTheToken_RecordsUnconfirmedAndStops()
+    {
+        var api = new FakePicktimeApiService()
+            .WithFreeHours(Target2b, 17, 18, 19)
+            .WithFreeHours(Target3a, 17, 18, 19)
+            .WithBookingResults(Target2b, 18, FakePicktimeApiService.Unknown())
+            .WithBookingException(Target2b, 18, new PicktimeAuthenticationException("The booking request returned HTTP 401."));
+
+        var summary = await CreateService(api).BookArcheryIndoorTargetAsync(BookingDate);
+
+        Assert.AreEqual(RunVerdict.AuthenticationFailed, summary.Verdict);
+        AssertUnconfirmedOn2b(summary, 18);
+        AssertFailedForAuthentication(summary, 19);
+        CollectionAssert.AreEqual(new[] { (Target2b, Slot17), (Target2b, Slot18), (Target2b, Slot18) }, BookingCalls(api));
+    }
+
+    // Plan section 4.1: a failed re-read leaves the booking as uncertain as before, whatever the error.
+    [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task BookArcheryIndoorTargetAsync_ReReadFails_RecordsUnconfirmedAndBooksTheOtherHours(bool isUnexpectedError)
+    {
+        Exception reReadException = isUnexpectedError
+            ? new InvalidOperationException("Something unexpected broke.")
+            : new PicktimeReadException("The availability read returned HTTP 500.");
+        var api = new FakePicktimeApiService()
+            .WithFreeHours(Target2b, 17, 18, 19)
+            .WithFreeHours(Target3a, 17, 18, 19)
+            .WithBookingResults(Target2b, 18, FakePicktimeApiService.Unknown())
+            .WithReReadException(Target2b, reReadException);
+
+        var summary = await CreateService(api).BookArcheryIndoorTargetAsync(BookingDate);
+
+        AssertUnconfirmedOn2b(summary, 18);
+        AssertReReadOf2b(api);
+        CollectionAssert.AreEqual(new[] { (Target2b, Slot18) }, BookingCallsAt(api, Slot18));
+        Assert.AreEqual(BookingOutcome.Booked, OutcomeAt(summary, 19));
+        Assert.AreEqual(RunVerdict.Partial, summary.Verdict);
+        CollectionAssert.AreEqual(new[] { "2b" }, WarningTargetNames());
+    }
+
+    // An unexpected error on the second attempt is unconfirmed, not failed: the first request may have booked the hour.
+    [TestMethod]
+    public async Task BookArcheryIndoorTargetAsync_SecondAttemptThrows_RecordsUnconfirmedAndDoesNotTry3a()
+    {
+        var api = new FakePicktimeApiService()
+            .WithFreeHours(Target2b, 17, 18, 19)
+            .WithFreeHours(Target3a, 17, 18, 19)
+            .WithBookingResults(Target2b, 18, FakePicktimeApiService.Unknown())
+            .WithBookingException(Target2b, 18, new InvalidOperationException("Something unexpected broke."));
+
+        var summary = await CreateService(api).BookArcheryIndoorTargetAsync(BookingDate);
+
+        AssertUnconfirmedOn2b(summary, 18);
+        CollectionAssert.AreEqual(new[] { (Target2b, Slot18), (Target2b, Slot18) }, BookingCallsAt(api, Slot18));
+    }
+
+    [TestMethod]
+    public async Task BookArcheryIndoorTargetAsync_CallerCancelsDuringReRead_ThrowsAndBooksNothingMore()
+    {
+        // The token is cancelled only during the re-read, as when the host stops the run at that moment.
+        using var cancellation = new CancellationTokenSource();
+        var api = new FakePicktimeApiService()
+            .WithFreeHours(Target2b, 17, 18, 19)
+            .WithBookingResults(Target2b, 17, FakePicktimeApiService.Unknown())
+            .WithReReadException(Target2b, () =>
+            {
+                cancellation.Cancel();
+                return new OperationCanceledException(cancellation.Token);
+            });
+        var service = CreateService(api);
+
+        await Assert.ThrowsExactlyAsync<OperationCanceledException>(
+            () => service.BookArcheryIndoorTargetAsync(BookingDate, cancellation.Token));
+
+        AssertReReadOf2b(api);
+        Assert.HasCount(1, api.BookingRequests);
     }
 
     // Test 31
@@ -364,6 +533,25 @@ public sealed class BookingAlgorithmTests
     private static (string ResourceId, long Slot)[] BookingCalls(FakePicktimeApiService api)
     {
         return api.BookingRequests.Select(request => (request.ResourceId, request.DateTimeOfBooking)).ToArray();
+    }
+
+    private static (string ResourceId, long Slot)[] BookingCallsAt(FakePicktimeApiService api, long slot)
+    {
+        return BookingCalls(api).Where(call => call.Slot == slot).ToArray();
+    }
+
+    /// <summary>One read of each target, then the re-read of 2b after its unknown result.</summary>
+    private static void AssertReReadOf2b(FakePicktimeApiService api)
+    {
+        Assert.HasCount(3, api.AvailabilityReads);
+        Assert.AreEqual(Target2b, api.AvailabilityReads[2]);
+    }
+
+    private static void AssertUnconfirmedOn2b(BookingSummary summary, int hour)
+    {
+        var attempt = AttemptAt(summary, hour);
+        Assert.AreEqual(BookingOutcome.Unconfirmed, attempt.Outcome);
+        Assert.AreEqual("2b", attempt.TargetName);
     }
 
     private string?[] WarningTargetNames()

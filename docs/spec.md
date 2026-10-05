@@ -348,6 +348,14 @@ Notes:
 
 After an unknown result, the automation never books a second target for that hour. Losing an hour is accepted in preference to a possible duplicate.
 
+After an unknown result, the hour ends only as `Booked` or `Unconfirmed`, never as `Failed` or `NoAvailability`, because the first request may have booked it. So:
+
+* a. If the further attempt in step 3 is rejected, record `Unconfirmed`. Picktime may now show the first request's booking as holding the hour.
+* b. If the token is rejected by the second read or by the further attempt, record `Unconfirmed` for this hour, then stop the run as for any rejected token.
+* If the second read fails for any other reason, or the further attempt fails in any other way, record `Unconfirmed`.
+
+The owner approved rules a and b on 2026-10-05.
+
 ### 6.5 Outcome per hour
 
 Each hour ends in exactly one of these states, and each is logged:

@@ -68,12 +68,16 @@ public class PicktimeBookingService : IPicktimeBookingService
                 attempts.Add(await BookHourOrRecordFailureAsync(date, hour, availability, ct));
             }
         }
+        catch (TokenRejectedAfterUnknownResultException exception)
+        {
+            // The hour keeps its unconfirmed outcome, because the first request may have booked it.
+            attempts.Add(exception.UnconfirmedAttempt);
+
+            return StopForRejectedToken(date, attempts, availability, exception.AuthenticationFailure);
+        }
         catch (PicktimeAuthenticationException exception)
         {
-            // Every further request would be rejected too, so the run stops here (spec section 6.4).
-            RecordUnfinishedHoursAsFailed(attempts, exception);
-
-            return CreateSummary(date, attempts, availability, RunVerdict.AuthenticationFailed);
+            return StopForRejectedToken(date, attempts, availability, exception);
         }
 
         return CreateSummary(date, attempts, availability, DecideVerdict(attempts));
@@ -135,7 +139,7 @@ public class PicktimeBookingService : IPicktimeBookingService
         {
             return await BookHourAsync(date, hour, availability, ct);
         }
-        catch (Exception exception) when (exception is not PicktimeAuthenticationException && !IsCallerCancellation(exception, ct))
+        catch (Exception exception) when (!IsRejectedToken(exception) && !IsCallerCancellation(exception, ct))
         {
             return new BookingAttempt { Hour = hour, Outcome = BookingOutcome.Failed, ErrorMessage = exception.Message };
         }
@@ -168,19 +172,11 @@ public class PicktimeBookingService : IPicktimeBookingService
             switch (result.Status)
             {
                 case BookingResultStatus.Succeeded:
-                    return new BookingAttempt { Hour = hour, Outcome = BookingOutcome.Booked, TargetName = target.Name, BookingId = result.BookingId };
+                    return CreateBookedAttempt(hour, target, result);
 
                 case BookingResultStatus.Unknown:
-                    // The booking may exist, so no other target is tried for this hour. T11 adds the re-read
-                    // and the second attempt in spec section 6.4; until then this is the safe interim rule.
-                    _logger.LogWarning(
-                        "The booking for {Hour}:00 on {BookingDate} on target {TargetName} is unconfirmed. No other target is tried for this hour. {ApiMessage}",
-                        hour,
-                        date,
-                        target.Name,
-                        result.Message);
-
-                    return new BookingAttempt { Hour = hour, Outcome = BookingOutcome.Unconfirmed, TargetName = target.Name, ErrorMessage = result.Message };
+                    // The booking may exist, so no other target is ever tried for this hour.
+                    return await ResolveUnknownResultAsync(date, hour, slot, target, result, ct);
 
                 case BookingResultStatus.Rejected:
                     // A slot reported free can still be taken before the booking lands, so fall through.
@@ -193,6 +189,108 @@ public class PicktimeBookingService : IPicktimeBookingService
         }
 
         return new BookingAttempt { Hour = hour, Outcome = BookingOutcome.Failed, ErrorMessage = lastRejectionMessage };
+    }
+
+    /// <summary>
+    /// "Unknown booking results" in spec section 6.4. After an unknown result the hour ends as
+    /// <see cref="BookingOutcome.Booked"/> or <see cref="BookingOutcome.Unconfirmed"/>, never as
+    /// <see cref="BookingOutcome.Failed"/>, because the first request may have booked it.
+    /// A rejected token records this hour as unconfirmed, then stops the run (plan section 4.1).
+    /// </summary>
+    private async Task<BookingAttempt> ResolveUnknownResultAsync(
+        DateOnly date,
+        int hour,
+        long slot,
+        BookingTargetOptions target,
+        BookingResult firstResult,
+        CancellationToken ct)
+    {
+        // Every reason starts with the first result's message, so the log shows why Picktime's answer was unclear.
+        var firstReason = $"The first booking result was unknown. {firstResult.Message}";
+
+        try
+        {
+            return await ReReadAndTryOnceMoreAsync(date, hour, slot, target, firstReason, ct);
+        }
+        catch (PicktimeAuthenticationException exception)
+        {
+            var unconfirmedAttempt = RecordUnconfirmed(date, hour, target, $"{firstReason} Authentication failed. {exception.Message}");
+
+            throw new TokenRejectedAfterUnknownResultException(unconfirmedAttempt, exception);
+        }
+        catch (Exception exception) when (!IsCallerCancellation(exception, ct))
+        {
+            return RecordUnconfirmed(date, hour, target, $"{firstReason} {exception.Message}", exception);
+        }
+    }
+
+    /// <summary>
+    /// The request is never resent without a fresh read: a free hour shows that the first request did not book it.
+    /// </summary>
+    private async Task<BookingAttempt> ReReadAndTryOnceMoreAsync(
+        DateOnly date,
+        int hour,
+        long slot,
+        BookingTargetOptions target,
+        string firstReason,
+        CancellationToken ct)
+    {
+        var freeSlots = await _api.GetAvailableSlotsAsync(target.ResourceId, date, ct);
+
+        if (!freeSlots.Contains(slot))
+        {
+            return RecordUnconfirmed(date, hour, target, $"{firstReason} The hour is no longer free.");
+        }
+
+        var result = await _api.CreateBookingAsync(new BookingRequest(slot, target.ResourceId), ct);
+
+        switch (result.Status)
+        {
+            case BookingResultStatus.Succeeded:
+                return CreateBookedAttempt(hour, target, result);
+
+            case BookingResultStatus.Unknown:
+                return RecordUnconfirmed(date, hour, target, $"{firstReason} The second booking result was also unknown. {result.Message}");
+
+            case BookingResultStatus.Rejected:
+                // The hour may be taken by the first request's booking, which Picktime now shows.
+                return RecordUnconfirmed(date, hour, target, $"{firstReason} The second booking request was rejected. {result.Message}");
+
+            default:
+                throw new ArgumentOutOfRangeException(nameof(result), result.Status, "Unknown booking result status.");
+        }
+    }
+
+    private static BookingAttempt CreateBookedAttempt(int hour, BookingTargetOptions target, BookingResult result)
+    {
+        return new BookingAttempt { Hour = hour, Outcome = BookingOutcome.Booked, TargetName = target.Name, BookingId = result.BookingId };
+    }
+
+    private BookingAttempt RecordUnconfirmed(DateOnly date, int hour, BookingTargetOptions target, string reason, Exception? exception = null)
+    {
+        _logger.LogWarning(
+            exception,
+            "The booking for {Hour}:00 on {BookingDate} on target {TargetName} is unconfirmed. No other target is tried for this hour. {Reason}",
+            hour,
+            date,
+            target.Name,
+            reason);
+
+        return new BookingAttempt { Hour = hour, Outcome = BookingOutcome.Unconfirmed, TargetName = target.Name, ErrorMessage = reason };
+    }
+
+    /// <summary>
+    /// Every further request would be rejected too, so the run stops here (spec section 6.4).
+    /// </summary>
+    private BookingSummary StopForRejectedToken(
+        DateOnly date,
+        List<BookingAttempt> attempts,
+        IReadOnlyList<TargetAvailability> availability,
+        PicktimeAuthenticationException exception)
+    {
+        RecordUnfinishedHoursAsFailed(attempts, exception);
+
+        return CreateSummary(date, attempts, availability, RunVerdict.AuthenticationFailed);
     }
 
     /// <summary>
@@ -239,6 +337,11 @@ public class PicktimeBookingService : IPicktimeBookingService
         return exception is OperationCanceledException && ct.IsCancellationRequested;
     }
 
+    private static bool IsRejectedToken(Exception exception)
+    {
+        return exception is PicktimeAuthenticationException or TokenRejectedAfterUnknownResultException;
+    }
+
     private static BookingSummary CreateSummary(
         DateOnly date,
         IReadOnlyList<BookingAttempt> attempts,
@@ -264,4 +367,18 @@ public class PicktimeBookingService : IPicktimeBookingService
         IReadOnlyList<long> FreeSlots,
         bool ReadFailed = false,
         PicktimeAuthenticationException? AuthenticationFailure = null);
+
+    /// <summary>
+    /// Picktime rejected the token while an unknown result was being resolved. It carries the hour's
+    /// unconfirmed outcome to the run, which then stops as for any rejected token.
+    /// </summary>
+    private sealed class TokenRejectedAfterUnknownResultException(
+        BookingAttempt unconfirmedAttempt,
+        PicktimeAuthenticationException authenticationFailure)
+        : Exception(authenticationFailure.Message, authenticationFailure)
+    {
+        public BookingAttempt UnconfirmedAttempt { get; } = unconfirmedAttempt;
+
+        public PicktimeAuthenticationException AuthenticationFailure { get; } = authenticationFailure;
+    }
 }

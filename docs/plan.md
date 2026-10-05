@@ -287,11 +287,14 @@ So:
 
 It returns `Succeeded` for a parsed `status: true`, and `Rejected` for a parsed `status: false` or an HTTP 4xx. HTTP 401 and 403 are also authentication failures (section 4.2).
 
-**Handling an `Unknown` result** follows the four steps in spec section 6.4. The request is never resent. Design details:
+**Handling an `Unknown` result** follows the four steps in spec section 6.4. The request is never resent without a fresh read, and is resent at most once, to the same target. Design details:
 
 * The re-read is a call to `GetAvailableSlotsAsync` for that target and the booking date, checked for that hour.
-* Both `Unconfirmed` cases log a warning.
-* If the re-read itself fails, with `PicktimeReadException`, the hour records `Unconfirmed`. The booking may exist, so no other target is tried.
+* Every `Unconfirmed` case logs a warning, with the hour, booking date, target name and reason as named placeholders.
+* If the re-read itself fails, with `PicktimeReadException` or any other exception, the hour records `Unconfirmed`. An unexpected exception from the second attempt also records `Unconfirmed`, not `Failed` as in section 4.2. The booking may exist, so no other target is tried. A failed re-read is not added to `FailedReads`, which lists only the reads made once per run.
+* A second attempt that returns `Rejected` records `Unconfirmed`, as spec section 6.4 rule a requires.
+* A `PicktimeAuthenticationException` from the re-read or the second attempt records `Unconfirmed` for this hour, then stops the run with the `AuthenticationFailed` verdict, as section 4.2 says. This meets spec section 6.4 rule b. Hours not yet finished record `Failed`. A private exception in `PicktimeBookingService` carries the hour's `Unconfirmed` outcome to the run, so the run keeps it.
+* The caller's cancellation is never caught.
 
 That turns an unsafe retry into a safe one, using the availability endpoint we already have. It never holds two bookings for the same hour, as spec section 9 requires. The cost is that, rarely, an hour that 3a could have filled is lost.
 
@@ -311,12 +314,12 @@ An HTTP-triggered function must respond within 230 seconds, whatever `functionTi
 
 | Situation | Behaviour |
 | --- | --- |
-| HTTP 401 or 403, or a token rejection message | The API client throws `PicktimeAuthenticationException`, from either call, with no retry. The booking service catches it, stops the run, and sets the `AuthenticationFailed` verdict. Hours not yet finished record `Failed`, with authentication as the reason (section 3.1). Log at error level, naming authentication as the cause. This meets spec sections 5.3 and 6.4. |
+| HTTP 401 or 403, or a token rejection message | The API client throws `PicktimeAuthenticationException`, from either call, with no retry. The booking service catches it, stops the run, and sets the `AuthenticationFailed` verdict. Hours not yet finished record `Failed`, with authentication as the reason (section 3.1). An hour with an unknown booking result records `Unconfirmed` instead (section 4.1). Log at error level, naming authentication as the cause. This meets spec sections 5.3 and 6.4. |
 | `status: false` — slot taken | No retry. Fall through to the next target, as spec section 6.4 requires. |
 | Malformed or empty body from the booking `POST` | The result is `Unknown`. Handle as section 4.1. Log the raw body at Warning level, cut to its first 1 KB. |
 | Malformed or empty body from the availability `GET` | The read has failed: throw `PicktimeReadException` (section 3). Log the raw body at Warning level, cut to its first 1 KB. |
 | An availability read fails after retries | The API client throws `PicktimeReadException`. The booking service handles it as in section 3, which meets spec section 6.4. |
-| An hour throws unexpectedly | Catch, record `Failed`, and continue to the next hour. This meets spec section 6.5. |
+| An hour throws unexpectedly | Catch, record `Failed`, and continue to the next hour. This meets spec section 6.5. After an unknown booking result, record `Unconfirmed` instead (section 4.1). |
 | Invalid or past `bookingDate` on the HTTP trigger | Return HTTP 400 with the reason, and do not call the booking service. This meets spec section 6.7. |
 | Unexpected error in any function | Handled by the exception middleware (section 3): it logs the exception and writes the `Error` summary event. For the HTTP trigger it returns HTTP 500 with a short message: "The booking run failed. See the logs." No stack trace or internal detail is returned. This meets spec section 6.7. |
 
