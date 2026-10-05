@@ -2,7 +2,7 @@
 
 > **What this document is for:** It answers *what do we do next?* It splits the approved design into small, verifiable steps and tracks progress against them.
 
-Last updated: 2026-10-03
+Last updated: 2026-10-05
 
 <!--
 How to use this file
@@ -136,7 +136,7 @@ Goal: the booking rules in spec section 6 are implemented, covered by their test
   - Verify: the standard test command
   - Notes: `LondonClock`, `SeasonGate` and `PicktimeTimestamp` are in the `Dates` folder of `PicktimeAutomation.Services`, with the namespace `PicktimeAutomation.Services.Dates`, which matches the `Validators`, `Interfaces` and `Exceptions` folders. The owner asked for the folder during review on 2026-10-05. `SeasonGate.IsInSeason(date, seasonStart, seasonEnd)` is a public static pure function. It takes the two settings as arguments, so it reads no configuration. All four worked examples in spec section 6.3 agree with the rule, and each is a test that runs the service at 00:05 London time. `LondonClock` is registered as a singleton. It looks up `Europe/London` in its constructor, not in a static field, after review. The Picktime timestamp is built in one internal helper, `PicktimeTimestamp`, with the invariant culture. `PicktimeApiService` now uses it for the slots request too, which changes no behaviour. A test shows that a Thai Buddhist culture still sends a Gregorian timestamp. The tests give `FakeTimeProvider` the UTC instant, with a zero offset, as `TimeProvider.System` does. With a `+01:00` start time, `GetLocalNow()` returns the time unchanged, and tests 15 and 17 passed against a clock that used the host time zone. With the fix, a host-clock bug fails tests 15, 17 and 18 and the two BST worked examples. Review points left for later tasks: (1) the timer trigger passes no `CancellationToken` yet. T9 adds it when it finishes the triggers. (2) `FakePicktimeApiService` returns no free slots, because the interim loop does not read availability. T8 must make the free slots configurable, or the date tests fail for reasons that have nothing to do with the date. (3) A skipped run does not yet log the booking date or the reason, which spec sections 6.2 and 6.3 require. T15 adds it. (4) `SeasonGate` repeats the `MM-dd` parse in `BookingOptionsValidator`. This was left, because the validator checks the format at start-up.
 
-- [ ] **T8 — Rewrite the booking service**
+- [x] **T8 — Rewrite the booking service**
   - Refs: spec 4.1 defects 2 and 3, spec 5.3, spec 6.4, spec 6.5, spec 6.6, plan 3, plan 3.1, plan 3.4, plan 4.2, plan 7.3, tests 1–6, 9–11, 31
   - Depends on: T4, T5, T6, T7
   - Done when:
@@ -149,7 +149,13 @@ Goal: the booking rules in spec section 6 are implemented, covered by their test
     - A failure on one hour never stops the other hours, except a rejected token.
     - Tests 1–6, 9–11 and 31 pass.
   - Verify: the standard test command
-  - Notes:
+  - Notes: Tests 1–6, 9–11 and 31 are in `BookingAlgorithmTests`, with extra tests for the T8 interim rule for `Unknown`, a token rejected by a booking after an hour was booked, a token rejected alongside a failed read, the caller's cancellation, and the `Failure` verdict. Points to record:
+    1. Any exception from one availability read, except a rejected token and the caller's cancellation, is a failed read. Plan section 3 names only `PicktimeReadException`, but spec section 6.4 says "if an availability read fails", and one unexpected error must not stop the other target being used. Found in review.
+    2. Every read is left to finish, so `FailedReads` is complete even when another read rejected the token. A rejected read token stops the run before any booking.
+    3. An unexpected exception on an hour records `Failed` and tries no other target for that hour, because the POST may already have reached Picktime.
+    4. `FakePicktimeApiService` now sets free hours, booking results and exceptions per target and hour. It can also hold the reads until both have started, which proves they run concurrently: the test fails when the reads are made sequential. The T7 tests give 2b every hour free. No assertion was removed, and the token test now also checks the reads.
+    5. The test project references `Microsoft.Extensions.Diagnostics.Testing`, for `FakeLogger`, to check the two warnings.
+    6. Review points left for T15: an authentication failure is not logged at error level (plan section 4.2), and an unexpected exception on an hour is recorded only as its message, with no log of the exception. T15 must log the exception in that catch block in `PicktimeBookingService`, because the summary does not hold it. When every free target rejects an hour, only the last rejection message is kept.
 
 - [ ] **T9 — Add the HTTP trigger and finish both triggers**
   - Refs: spec 6.1, spec 6.5, spec 6.7, plan 3, plan 3.1, plan 4.2, plan 5.3, plan 6, plan 7.7, tests 27–29, 34
@@ -347,3 +353,4 @@ Goal: the automation is proved in production and left running.
 * 2026-10-02 — T5 — Read availability — branch `task/t5-read-availability`
 * 2026-10-02 — T6 — Fix the booking request and parse its response — branch `task/t6-fix-booking-request`
 * 2026-10-03 — T7 — Booking date and season gate — branch `task/t7-booking-date-season-gate`
+* 2026-10-05 — T8 — Rewrite the booking service — branch `task/t8-rewrite-booking-service`

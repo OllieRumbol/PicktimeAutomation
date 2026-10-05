@@ -1,4 +1,5 @@
 using System.Globalization;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using PicktimeAutomation.Models;
@@ -23,7 +24,7 @@ public sealed class BookingDateAndSeasonTests
     [DataRow("2026-07-15", DisplayName = "Mid-summer")]
     public async Task BookArcheryIndoorTargetAsync_DateOutsideSeason_SkipsWithNoApiCalls(string bookingDate)
     {
-        var api = new FakePicktimeApiService();
+        var api = ApiWithEveryHourFreeOn2b();
         var service = CreateService(api, LondonTime(2026, 9, 1, 0, 5));
         var date = DateOnly.Parse(bookingDate, CultureInfo.InvariantCulture);
 
@@ -50,7 +51,7 @@ public sealed class BookingDateAndSeasonTests
         string expectedBookingDate,
         bool expectedToBook)
     {
-        var api = new FakePicktimeApiService();
+        var api = ApiWithEveryHourFreeOn2b();
         var service = CreateService(api, DateTimeOffset.Parse(runTimeUtc, CultureInfo.InvariantCulture));
 
         var summary = await service.BookArcheryIndoorTargetAsync();
@@ -72,7 +73,7 @@ public sealed class BookingDateAndSeasonTests
     [TestMethod]
     public async Task BookArcheryIndoorTargetAsync_RunJustAfterLondonMidnightInBst_BooksFromTheLondonDate()
     {
-        var api = new FakePicktimeApiService();
+        var api = ApiWithEveryHourFreeOn2b();
         var runTime = LondonTime(2026, 10, 6, 0, 5);
         Assert.AreEqual(new DateTimeOffset(2026, 10, 5, 23, 5, 0, TimeSpan.Zero), runTime.ToUniversalTime());
         var service = CreateService(api, runTime);
@@ -89,7 +90,7 @@ public sealed class BookingDateAndSeasonTests
     [TestMethod]
     public async Task BookArcheryIndoorTargetAsync_RunInGmt_BooksSevenDaysAhead()
     {
-        var api = new FakePicktimeApiService();
+        var api = ApiWithEveryHourFreeOn2b();
         var service = CreateService(api, LondonTime(2026, 12, 1, 0, 5));
 
         var summary = await service.BookArcheryIndoorTargetAsync();
@@ -104,7 +105,7 @@ public sealed class BookingDateAndSeasonTests
     [TestMethod]
     public async Task BookArcheryIndoorTargetAsync_RunInBstForDateInGmt_BooksTheSameWeekday()
     {
-        var api = new FakePicktimeApiService();
+        var api = ApiWithEveryHourFreeOn2b();
         var service = CreateService(api, LondonTime(2026, 10, 23, 0, 5));
 
         var summary = await service.BookArcheryIndoorTargetAsync();
@@ -122,8 +123,8 @@ public sealed class BookingDateAndSeasonTests
     {
         const int configuredDaysAhead = 10;
         var runTime = LondonTime(2026, 10, 6, 0, 5);
-        var defaultApi = new FakePicktimeApiService();
-        var explicitApi = new FakePicktimeApiService();
+        var defaultApi = ApiWithEveryHourFreeOn2b();
+        var explicitApi = ApiWithEveryHourFreeOn2b();
         var defaultService = CreateService(defaultApi, runTime, configuredDaysAhead);
         var explicitService = CreateService(explicitApi, runTime, configuredDaysAhead);
 
@@ -138,7 +139,7 @@ public sealed class BookingDateAndSeasonTests
     [TestMethod]
     public async Task BookArcheryIndoorTargetAsync_NonGregorianCulture_StillSendsGregorianTimestamps()
     {
-        var api = new FakePicktimeApiService();
+        var api = ApiWithEveryHourFreeOn2b();
         var service = CreateService(api, LondonTime(2026, 10, 6, 0, 5));
         var originalCulture = CultureInfo.CurrentCulture;
 
@@ -158,9 +159,9 @@ public sealed class BookingDateAndSeasonTests
     }
 
     [TestMethod]
-    public async Task BookArcheryIndoorTargetAsync_WithToken_PassesItToEveryBookingCall()
+    public async Task BookArcheryIndoorTargetAsync_WithToken_PassesItToEveryCall()
     {
-        var api = new FakePicktimeApiService();
+        var api = ApiWithEveryHourFreeOn2b();
         var service = CreateService(api, LondonTime(2026, 10, 6, 0, 5));
         using var cancellation = new CancellationTokenSource();
 
@@ -168,6 +169,16 @@ public sealed class BookingDateAndSeasonTests
 
         Assert.HasCount(3, api.BookingTokens);
         Assert.IsTrue(api.BookingTokens.All(token => token == cancellation.Token));
+        Assert.HasCount(2, api.ReadTokens);
+        Assert.IsTrue(api.ReadTokens.All(token => token == cancellation.Token));
+    }
+
+    /// <summary>
+    /// Every configured hour is free on 2b, so a run in the season books all three, and a failure is about the date.
+    /// </summary>
+    private static FakePicktimeApiService ApiWithEveryHourFreeOn2b()
+    {
+        return new FakePicktimeApiService().WithFreeHours("fake-resource-2b", 17, 18, 19);
     }
 
     private static PicktimeBookingService CreateService(
@@ -192,7 +203,11 @@ public sealed class BookingDateAndSeasonTests
             SeasonEnd = "03-31",
         };
 
-        return new PicktimeBookingService(api, Options.Create(bookingOptions), new LondonClock(timeProvider));
+        return new PicktimeBookingService(
+            api,
+            Options.Create(bookingOptions),
+            new LondonClock(timeProvider),
+            NullLogger<PicktimeBookingService>.Instance);
     }
 
     /// <summary>
