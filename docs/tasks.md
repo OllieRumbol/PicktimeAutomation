@@ -218,7 +218,7 @@ Goal: the booking rules in spec section 6 are implemented, covered by their test
     5. A check by mutation: with the two clients swapped in the registration, test 33 fails in both directions. Without `DisableForUnsafeHttpMethods`, the read-client POST test fails.
     6. `/code-review` found 8 points and no blocker. Points 2 to 6 and 8 are fixed: the read client never retries a POST (`DisableForUnsafeHttpMethods`), every handler rejection becomes `PicktimeReadException`, the comments say "up to 3 retries", and a booking network error is tested through the real registration. Point 7 (build the service with `ActivatorUtilities`) is not done: it matches the two `HttpClient` arguments by order alone, and the named arguments are clearer. Point 1 is open for the owner: the read client keeps `HttpClient`'s default 100-second timeout, which still applies while the response body downloads, after the handler has returned. A body that stalls can make one read take up to 100 seconds, not the 30 in plan section 4.1. Plan section 4.1 says nothing is configured for the GET, so a fix, such as a 30-second `Timeout` on the read client, is a plan change.
 
-- [ ] **T11 — Handle an unknown booking result**
+- [x] **T11 — Handle an unknown booking result**
   - Refs: spec 6.4, spec 6.5, spec 9, plan 4.1, plan 7.4, tests 12–14
   - Depends on: T10
   - Done when:
@@ -229,6 +229,16 @@ Goal: the booking rules in spec section 6 are implemented, covered by their test
     - Tests 12–14 pass.
   - Verify: the standard test command
   - Notes: These tests prevent a duplicate booking. They are the most important tests in the suite. Before any real booking (T14).
+    Points to record:
+    1. The owner approved two rules on 2026-10-05 that the spec and plan did not cover. After an `Unknown` result an hour ends only as `Booked` or `Unconfirmed`. (a) A second attempt that is `Rejected` records `Unconfirmed`, because Picktime may now show the first request's booking. (b) A rejected token on the re-read records `Unconfirmed` for the hour, then stops the run with `AuthenticationFailed`. Both are in spec section 6.4 and plan section 4.1.
+    2. The same principle is applied to the second attempt: a rejected token on it is handled as rule b, and an unexpected exception from it records `Unconfirmed`, not `Failed`. The owner approved this on 2026-10-05, after the pull request was opened. Plan section 4.2 points to section 4.1 for both.
+    3. Any exception from the re-read, except a rejected token and the caller's cancellation, records `Unconfirmed`, as plan section 4.1 now says. A failed re-read is not added to `FailedReads`.
+    4. A private `TokenRejectedAfterUnknownResultException` carries the hour's `Unconfirmed` outcome to the run, which then stops as for any rejected token.
+    5. `FakePicktimeApiService` gained `WithFreeHoursOnReRead`, `WithReReadException` and `AvailabilityReads`. A booking exception is now thrown once the queued results for that target and hour are used, so a test can make the second attempt throw. No existing test set both.
+    6. Two T8 tests changed, as expected. The interim-rule test is replaced by test 12. The `Unconfirmed` row of test 11 now makes the re-read show the hour as taken: with the hour still free, the second attempt books it.
+    7. Test 14 and rule a are one data-driven test over the second result. Extra tests: rule b, a rejected token on the second attempt, an unexpected exception on the second attempt, a failed re-read (`PicktimeReadException` and an unexpected error), an unknown result on the fallback target 3a, and the caller's cancellation during the re-read.
+    8. A check by mutation: resending without checking the re-read fails test 12 and test 11. Falling through to 3a on `Unknown` fails 11 tests. Re-reading the first free target, not the one that gave `Unknown`, fails the 3a test.
+    9. `/code-review` found 9 points and no blocker. Points 1, 2, 5, 6, 7, 8 and 9 are fixed: every `Unconfirmed` reason keeps the first result's message, a test covers an unknown result on 3a, both stop-the-run paths share `StopForRejectedToken`, test 14 and rule a are one data-driven test, plan section 4.1 no longer says the request is never resent, the cancellation test cancels during the re-read, and the slot and the `Booked` attempt are not built twice. Point 4 (the private exception is control flow) is not done: a rejected token already stops the run through an exception, the wrapper keeps it as the inner exception, and a result type would change three method signatures and still need the existing catch. Point 3 is left for T15: a rejected token after an unknown result is logged only at Warning level, as for the other paths in T8 note 6.
 
 ## Phase 3 — Prove it against the real API
 
@@ -394,3 +404,4 @@ Goal: the automation is proved in production and left running.
 * 2026-10-05 — T9 — Add the HTTP trigger and finish both triggers — branch `task/t9-triggers`
 * 2026-10-05 — T9a — Book a late run inside the late-run window — branch `task/t9a-late-run-window`
 * 2026-10-05 — T10 — Retry the availability read only — branch `task/t10-retry-availability-read`
+* 2026-10-05 — T11 — Handle an unknown booking result — branch `task/t11-unknown-booking-result`
