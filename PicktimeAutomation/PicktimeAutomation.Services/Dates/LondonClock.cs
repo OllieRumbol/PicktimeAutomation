@@ -25,8 +25,17 @@ public sealed class LondonClock
 
     public DateOnly Today()
     {
+        return DateOnly.FromDateTime(Now());
+    }
+
+    /// <summary>
+    /// The London wall-clock time, as a <see cref="DateTime"/> and not a <see cref="DateTimeOffset"/>,
+    /// because NCrontab reads a schedule on <see cref="DateTime"/> values in the schedule's own time zone (plan section 3).
+    /// </summary>
+    public DateTime Now()
+    {
         var londonNow = TimeZoneInfo.ConvertTime(_timeProvider.GetUtcNow(), _londonTimeZone);
 
-        return DateOnly.FromDateTime(londonNow.DateTime);
+        return londonNow.DateTime;
     }
 }

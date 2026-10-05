@@ -2,6 +2,7 @@ using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using PicktimeAutomation.AzureFunctions.Extensions;
 using PicktimeAutomation.Models;
+using PicktimeAutomation.Services.Dates;
 using PicktimeAutomation.Services.Interfaces;
 
 namespace PicktimeAutomation.AzureFunctions;
@@ -12,11 +13,13 @@ namespace PicktimeAutomation.AzureFunctions;
 public class TargetBookingFunction
 {
     private readonly IPicktimeBookingService _bookingService;
+    private readonly LateRunWindow _lateRunWindow;
     private readonly ILogger<TargetBookingFunction> _logger;
 
-    public TargetBookingFunction(IPicktimeBookingService bookingService, ILogger<TargetBookingFunction> logger)
+    public TargetBookingFunction(IPicktimeBookingService bookingService, LateRunWindow lateRunWindow, ILogger<TargetBookingFunction> logger)
     {
         _bookingService = bookingService ?? throw new ArgumentNullException(nameof(bookingService));
+        _lateRunWindow = lateRunWindow ?? throw new ArgumentNullException(nameof(lateRunWindow));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -29,12 +32,18 @@ public class TargetBookingFunction
             timer.ScheduleStatus?.Last,
             timer.ScheduleStatus?.Next);
 
-        // A late run would book from the wrong run date, so it books nothing (spec section 6.1).
+        // A late run books only inside the late-run window, where its booking date is still correct (spec section 6.1).
         if (timer.IsPastDue)
         {
-            _logger.LogWarning("The scheduled run started late, after a missed schedule. Nothing was booked. Catch up with the manual trigger.");
-            _logger.LogBookingSummary(new BookingSummary { Verdict = RunVerdict.Missed });
-            return;
+            var lateRunAllowed = _lateRunWindow.AllowsLateRun();
+            _logger.LogInformation("The scheduled run started late. LateRunAllowed={LateRunAllowed}", lateRunAllowed);
+
+            if (!lateRunAllowed)
+            {
+                _logger.LogWarning("The scheduled run started late, outside the late-run window. Nothing was booked. Catch up with the manual trigger.");
+                _logger.LogBookingSummary(new BookingSummary { Verdict = RunVerdict.Missed });
+                return;
+            }
         }
 
         var summary = await _bookingService.BookArcheryIndoorTargetAsync(ct: ct);

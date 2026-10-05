@@ -13,7 +13,7 @@ internal static class TestSettings
     /// </summary>
     public static Dictionary<string, string?> Valid() => new()
     {
-        // Any non-empty expression passes the rule, so this is deliberately not the real schedule.
+        // Any six-field expression passes the rule, so this is deliberately not the real schedule.
         ["BookingSchedule"] = "0 0 1 * * *",
         ["Picktime:BaseUrl"] = "https://picktime.invalid/",
         ["Picktime:ScanToken"] = "fake-scan-token",

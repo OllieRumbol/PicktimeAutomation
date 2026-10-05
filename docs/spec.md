@@ -435,9 +435,10 @@ One observation on timing: bookings are made by hand until the automation is dep
 * Target 2b is preferred and 3a is used per hour when 2b is taken.
 * Runs outside the season do nothing, and say so in the logs.
 * No secret is in the repository's current files, and no personal detail is in the source code.
-* The automation never holds two bookings for the same hour, on the same target or different targets, even when a booking request times out. Two exceptions are accepted, because each needs an unusual event and only one person runs the automation:
+* The automation never holds two bookings for the same hour, on the same target or different targets, even when a booking request times out. Three exceptions are accepted, because each needs an unusual event and only one person runs the automation:
   1. A manual run for the same booking date as a scheduled run. The manual trigger is not used between 00:05 and 01:00 on a run day, because a late scheduled run can start at any time in that window (section 6.1). It is not used for a booking date that a run has already booked.
   2. A scheduled run that is run again after the host stops in the middle of it, and restarts before 01:00 (section 6.1). The second run can book the fallback target for hours the first run booked. No deployment is made between 00:05 and 01:00 on a run day.
+  3. A late run for a run day missed in an outage of more than one day, when the host starts a few seconds before the run time on a later run day. The late run starts just after the run time, so it books (section 6.1), and that day's own run then books the same booking date again. The second run can book the fallback target for hours the first run booked.
 * All tests pass.
 * Deployment is automated, and a failing test stops a deployment.
 * One real booking has been confirmed on the Picktime site from a run in Azure, and its confirmation email arrived.

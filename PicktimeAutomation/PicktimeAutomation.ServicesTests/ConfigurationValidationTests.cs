@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using PicktimeAutomation.Models;
 using PicktimeAutomation.Services;
+using PicktimeAutomation.Services.Dates;
 
 namespace PicktimeAutomation.ServicesTests;
 
@@ -24,6 +25,22 @@ public sealed class ConfigurationValidationTests
         Assert.AreEqual("03-31", settings["Booking:SeasonEnd"]);
 
         Validate(settings);
+    }
+
+    // The timer trigger needs the window. If its registration breaks, the timer fails at 00:05, not at start-up.
+    [TestMethod]
+    public void AddPicktimeServices_SettingsAreValid_RegistersTheLateRunWindow()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(TestSettings.Valid())
+            .Build();
+        var services = new ServiceCollection();
+        services.AddPicktimeServices(configuration);
+
+        using var provider = services.BuildServiceProvider();
+        var window = provider.GetService<LateRunWindow>();
+
+        Assert.IsNotNull(window);
     }
 
     [TestMethod]
@@ -89,6 +106,21 @@ public sealed class ConfigurationValidationTests
     {
         var settings = TestSettings.Valid();
         settings.Remove("BookingSchedule");
+
+        var exception = Assert.ThrowsExactly<InvalidOperationException>(() => Validate(settings));
+
+        StringAssert.Contains(exception.Message, "BookingSchedule");
+    }
+
+    // The late-run window reads the schedule, so one that does not parse must stop start-up, not fail at 00:05.
+    [TestMethod]
+    [DataRow("not a schedule", DisplayName = "Not an expression")]
+    [DataRow("5 0 * * TUE,THU,FRI", DisplayName = "Five fields, with no seconds")]
+    [DataRow("0 5 25 * * *", DisplayName = "Hour 25")]
+    public void AddPicktimeServices_BookingScheduleDoesNotParse_StopsStartUpWithAMessageNamingTheSetting(string bookingSchedule)
+    {
+        var settings = TestSettings.Valid();
+        settings["BookingSchedule"] = bookingSchedule;
 
         var exception = Assert.ThrowsExactly<InvalidOperationException>(() => Validate(settings));
 

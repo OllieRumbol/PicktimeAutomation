@@ -182,7 +182,7 @@ Goal: the booking rules in spec section 6 are implemented, covered by their test
     8. Tests 28 and 29 have extra rows: no date passes no date to the service, and today is accepted in GMT as well as in BST. An extra timer test checks that a run on time passes the host's token and no date. It was added in review.
     9. Review points left for later tasks: (1) on the Consumption plan, a cold start just after 00:05 may make an on-time run `IsPastDue`, which plan section 3 would skip as `Missed`. The owner chose a late-run window, added as T9a. T18 and T21 check `IsPastDue` on real scheduled runs. (2) `ScheduleStatus.Last` and `Next` are logged with no offset, so the log alone cannot show London or UTC. T15 should log the host time zone or an offset, for the check in plan section 8.1. (3) A future date with the wrong year passes the past-date check and the season gate. The spec rejects only past dates.
 
-- [ ] **T9a — Book a late run inside the late-run window**
+- [x] **T9a — Book a late run inside the late-run window**
   - Refs: spec 6.1, spec 6.6, spec 9, plan 2, plan 3, plan 3.1, plan 4.2, plan 7.5, plan 7.7, plan 7.8, tests 34–36
   - Depends on: T9
   - Done when:
@@ -194,6 +194,12 @@ Goal: the booking rules in spec section 6 are implemented, covered by their test
     - Tests 34, 35 and 36 pass.
   - Verify: the standard test command
   - Notes: Added on 2026-10-05, after the T9 review found that a cold start on the Consumption plan may make an on-time run late. The spec and plan changes were approved by the owner on 2026-10-05, after `/review-plan`. The owner accepted the risk that a run started again after a restart books the fallback target (spec section 9, plan section 4.2), with the rule that no deployment is made between 00:05 and 01:00 on a run day. It is numbered T9a so that later task numbers do not change. Do it before the first scheduled run in Azure (T18).
+    Points to record:
+    1. `NCrontab.Signed` 3.4.0 is the current stable version (checked on NuGet on 2026-10-05).
+    2. Every spec 6.1 worked example is a row of test 36, in BST and again in GMT. With a UTC clock instead of London time, 8 tests fail, so the tests catch a host-clock bug. An extra row shows that a late run before today's run time is missed.
+    3. `LateRunWindow.IsValidSchedule` is the one parse rule, used by the start-up check and the constructor, so both read the schedule the same way. The occurrence search stops at now.
+    4. Extra tests: `LateRunWindow` resolves from the real `AddPicktimeServices` registration, and the timer's run on time does not depend on the window.
+    5. `/code-review` found 7 points. Points 2 to 6 are fixed. Point 7 (the schedule string repeated in two tests) is left, because the tests pin the schedule from plan section 2. Point 1: after an outage of more than one day, a late run that reaches the worker just after a run day's run time books, and that day's own run books the same date again. The owner accepted it on 2026-10-05 as the third exception in spec section 9, recorded in plan section 4.2.
 
 - [ ] **T10 — Retry the availability read only**
   - Refs: spec 9, plan 3, plan 4.1, plan 4.2, plan 7.2 rule 7, plan 7.6, test 33
@@ -380,3 +386,4 @@ Goal: the automation is proved in production and left running.
 * 2026-10-03 — T7 — Booking date and season gate — branch `task/t7-booking-date-season-gate`
 * 2026-10-05 — T8 — Rewrite the booking service — branch `task/t8-rewrite-booking-service`
 * 2026-10-05 — T9 — Add the HTTP trigger and finish both triggers — branch `task/t9-triggers`
+* 2026-10-05 — T9a — Book a late run inside the late-run window — branch `task/t9a-late-run-window`
