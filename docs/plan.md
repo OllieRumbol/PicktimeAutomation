@@ -3,7 +3,7 @@
 > **What this document is for:** It answers *how will we build it?* It turns the requirements in `spec.md` into a technical design, and it is agreed before any code is written.
 
 Status: Approved
-Last updated: 2026-10-02
+Last updated: 2026-10-05
 
 This document is the record of design decisions for this project. It says how the requirements in spec.md are met, and why that way. It does not restate requirements: it refers to them by section, such as "spec section 6.2". It was split out of spec.md on 2026-09-29. Keep it updated as decisions change.
 
@@ -116,6 +116,8 @@ Two changes of note against the current code:
 2. Both methods take a `CancellationToken`, which the Functions host supplies.
 
 **How `GetAvailableSlotsAsync` reports a failed read.** An empty list means the target is fully booked. A read that fails, after its retries, throws `PicktimeReadException`. That covers a network error, a timeout, any non-success HTTP status except 401 and 403, a body that cannot be parsed, or a body with `"status": false`. HTTP 401 and 403 throw `PicktimeAuthenticationException` instead (section 4.2). So a failed read can never be mistaken for a fully booked day, as spec section 6.4 requires. The booking service catches the exception, logs a warning naming the target, treats the target as having no free hours, and adds the target's name to `BookingSummary.FailedReads` (section 3.1). This matches how an authentication failure is reported, with `PicktimeAuthenticationException`.
+
+The booking service treats any other exception from one read the same way, as a failed read. The only exceptions are `PicktimeAuthenticationException`, which stops the run (section 4.2), and the caller's cancellation, which is never caught. An unexpected error leaves the free slots just as unknown, and spec section 6.4 requires that one target that cannot be read does not stop the others from being used. Every read is left to finish before a rejected token stops the run, so `FailedReads` is complete.
 
 `IPicktimeBookingService` keeps one entry point. The booking date is optional:
 
