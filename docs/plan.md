@@ -146,7 +146,9 @@ That placement is deliberate. If the trigger computed the date, the date rule â€
 
 1. Logs the exception at error level.
 2. Writes the summary event with the `Error` verdict (section 3.1), through `BookingLoggingExtensions`. The booking date is left empty, because the middleware does not know it.
-3. For an HTTP function, returns HTTP 500 with the short message in section 4.2, and no internal detail.
+3. For an HTTP function, returns HTTP 500 with the short message in section 4.2, and no internal detail. For any other function, such as the timer, it rethrows the exception, so the host still records the invocation as failed.
+
+It never handles the caller's cancellation: an `OperationCanceledException` while the function's cancellation token is cancelled is rethrown, and writes no summary event. Approved by the owner on 2026-10-05. A timeout, which also throws `OperationCanceledException` while the token is not cancelled, is an unexpected error and is handled as above.
 
 The triggers contain no try/catch, so they stay thin adapters, and a function added later is covered with no extra code. Note that in the isolated worker model an unhandled exception fails one run, not the host. The middleware exists for the run record and the safe HTTP response, not to keep the host alive.
 
