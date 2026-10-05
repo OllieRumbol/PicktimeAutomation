@@ -180,7 +180,20 @@ Goal: the booking rules in spec section 6 are implemented, covered by their test
     6. The middleware is registered after `ConfigureFunctionsWebApplication()`, so it runs inside the ASP.NET Core proxy middleware and the HTTP context is available. It writes the 500 response directly, because the function's result is empty after an exception. For a function that is not triggered by HTTP, it rethrows after logging, so the host still records the invocation as failed and the Invocations view (plan section 5.2) is not green. Found in review, and plan section 3 was updated to match.
     7. Both triggers still write the summary event, as the timer did before. Plan section 5.3 says the booking service writes it for a normal run. T15 reshapes the event and decides where it is written.
     8. Tests 28 and 29 have extra rows: no date passes no date to the service, and today is accepted in GMT as well as in BST. An extra timer test checks that a run on time passes the host's token and no date. It was added in review.
-    9. Review points left for later tasks: (1) on the Consumption plan, a cold start just after 00:05 may make an on-time run `IsPastDue`, which plan section 3 would skip as `Missed`. This is raised with the owner. T18 and T21 must check `IsPastDue` on real scheduled runs. (2) `ScheduleStatus.Last` and `Next` are logged with no offset, so the log alone cannot show London or UTC. T15 should log the host time zone or an offset, for the check in plan section 8.1. (3) A future date with the wrong year passes the past-date check and the season gate. The spec rejects only past dates.
+    9. Review points left for later tasks: (1) on the Consumption plan, a cold start just after 00:05 may make an on-time run `IsPastDue`, which plan section 3 would skip as `Missed`. The owner chose a late-run window, added as T9a. T18 and T21 check `IsPastDue` on real scheduled runs. (2) `ScheduleStatus.Last` and `Next` are logged with no offset, so the log alone cannot show London or UTC. T15 should log the host time zone or an offset, for the check in plan section 8.1. (3) A future date with the wrong year passes the past-date check and the season gate. The spec rejects only past dates.
+
+- [ ] **T9a — Book a late run inside the late-run window**
+  - Refs: spec 6.1, spec 6.6, spec 9, plan 2, plan 3, plan 3.1, plan 4.2, plan 7.5, plan 7.7, plan 7.8, tests 34–36
+  - Depends on: T9
+  - Done when:
+    - `LateRunWindow` exists in the `Dates` folder of `PicktimeAutomation.Services`, as in plan section 3, and is registered in `AddPicktimeServices`.
+    - `LondonClock` has `Now()`, built on the injected `TimeProvider`.
+    - `BookingSchedule` is read with `NCrontab.Signed`, at its current stable version. An expression that does not parse stops start-up with a message naming the setting.
+    - A timer run with `IsPastDue` set calls the booking service with no date when `LateRunWindow` allows it. Otherwise it records a `Missed` run, as before.
+    - For a late run, the timer logs whether `LateRunWindow` allowed it.
+    - Tests 34, 35 and 36 pass.
+  - Verify: the standard test command
+  - Notes: Added on 2026-10-05, after the T9 review found that a cold start on the Consumption plan may make an on-time run late. The spec and plan changes were approved by the owner on 2026-10-05, after `/review-plan`. The owner accepted the risk that a run started again after a restart books the fallback target (spec section 9, plan section 4.2), with the rule that no deployment is made between 00:05 and 01:00 on a run day. It is numbered T9a so that later task numbers do not change. Do it before the first scheduled run in Azure (T18).
 
 - [ ] **T10 — Retry the availability read only**
   - Refs: spec 9, plan 3, plan 4.1, plan 4.2, plan 7.2 rule 7, plan 7.6, test 33
@@ -291,11 +304,12 @@ Goal: the Function runs in Azure on the correct schedule, deployed by CI.
   - Notes:
 
 - [ ] **T18 — Deploy and check the schedule**
-  - Refs: spec 6.1, spec 6.2, plan 3.3, plan 8.1
-  - Depends on: T15, T17
+  - Refs: spec 6.1, spec 6.2, plan 3, plan 3.3, plan 8.1
+  - Depends on: T9a, T15, T17
   - Done when:
     - The Function is deployed from `main`.
     - The logs show the next scheduled run at 00:05 London time, not 00:05 UTC. This is the check for the trigger time in spec section 6.2.
+    - The first scheduled run after deployment logs `IsPastDue`, and, if it is late, whether the late-run window allowed it.
   - Verify: Function App → Log stream after deployment
   - Notes:
 
@@ -325,14 +339,16 @@ Goal: the automation is proved in production and left running.
   - Depends on: T19
   - Done when:
     - After one scheduled run, the logs, the Picktime emails and the Picktime site all agree.
-    - The run's log shows `IsPastDue` was false, so a normal wake-up is not mistaken for a late run.
+    - The run's log shows `IsPastDue` was false, or that it was true and the late-run window allowed the run, so a normal wake-up is never recorded as `Missed`.
   - Verify: the plan section 5.4 query, the run's log lines, the inbox and the Picktime site
   - Notes:
 
 - [ ] **T22 — Rewrite the README**
   - Refs: spec 9
   - Depends on: T18
-  - Done when: `README.md` says what the project does, how to run it locally, and which settings it needs.
+  - Done when:
+    - `README.md` says what the project does, how to run it locally, and which settings it needs.
+    - It states the operating rules in spec section 9: the manual trigger is not used between 00:05 and 01:00 on a run day, or for a booking date already booked, and no deployment is made between 00:05 and 01:00 on a run day.
   - Verify: follow the README from a fresh clone
   - Notes:
 
