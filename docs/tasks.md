@@ -157,7 +157,7 @@ Goal: the booking rules in spec section 6 are implemented, covered by their test
     5. The test project references `Microsoft.Extensions.Diagnostics.Testing`, for `FakeLogger`, to check the two warnings.
     6. Review points left for T15: an authentication failure is not logged at error level (plan section 4.2), and an unexpected exception on an hour is recorded only as its message, with no log of the exception. T15 must log the exception in that catch block in `PicktimeBookingService`, because the summary does not hold it. When every free target rejects an hour, only the last rejection message is kept.
 
-- [ ] **T9 — Add the HTTP trigger and finish both triggers**
+- [x] **T9 — Add the HTTP trigger and finish both triggers**
   - Refs: spec 6.1, spec 6.5, spec 6.7, plan 3, plan 3.1, plan 4.2, plan 5.3, plan 6, plan 7.7, tests 27–29, 34
   - Depends on: T8
   - Done when:
@@ -171,7 +171,16 @@ Goal: the booking rules in spec section 6 are implemented, covered by their test
     - The timer trigger skips a run with `IsPastDue` set: it logs a warning, writes the summary event with the `Missed` verdict, and does not call the booking service.
     - Tests 27–29 and 34 pass.
   - Verify: the standard test command
-  - Notes:
+  - Notes: Points to record:
+    1. The HTTP trigger is its own function, `ManualBookingFunction`, in its own class. The timer keeps the name `TargetBookingFunction`, so the `AzureWebJobs.TargetBookingFunction.Disabled` setting still disables only the timer.
+    2. Both triggers return ASP.NET Core `IResult` values: `Results.Json` for the summary, with enum values as names, and `Results.Problem` for HTTP 400 and 500. So every error is Problem Details. The owner approved Problem Details on 2026-10-05. The 400 detail names the reason, and for a past date it gives London today.
+    3. A `bookingDate` that is present but empty, or given twice, is invalid, not ignored. A typo must never fall back to the default date.
+    4. Test 27 uses a small fake `FunctionContext`, as planned. `GetHttpContext()` reads `Items["HttpRequestContext"]`, a key checked in `Microsoft.Azure.Functions.Worker.Extensions.Http.AspNetCore` 2.1.1. If a package upgrade changes the key, test 27 fails, which is the right signal. The fallback (a separate handler class) was not needed.
+    5. The middleware never handles the caller's cancellation: an `OperationCanceledException` while the function's token is cancelled is rethrown and records no `Error` run. A timeout with the token not cancelled is an `Error` run. Extra tests cover both. Plan section 3 was updated to record this. A run cancelled by the host is therefore not in the run record.
+    6. The middleware is registered after `ConfigureFunctionsWebApplication()`, so it runs inside the ASP.NET Core proxy middleware and the HTTP context is available. It writes the 500 response directly, because the function's result is empty after an exception. For a function that is not triggered by HTTP, it rethrows after logging, so the host still records the invocation as failed and the Invocations view (plan section 5.2) is not green. Found in review, and plan section 3 was updated to match.
+    7. Both triggers still write the summary event, as the timer did before. Plan section 5.3 says the booking service writes it for a normal run. T15 reshapes the event and decides where it is written.
+    8. Tests 28 and 29 have extra rows: no date passes no date to the service, and today is accepted in GMT as well as in BST. An extra timer test checks that a run on time passes the host's token and no date. It was added in review.
+    9. Review points left for later tasks: (1) on the Consumption plan, a cold start just after 00:05 may make an on-time run `IsPastDue`, which plan section 3 would skip as `Missed`. This is raised with the owner. T18 and T21 must check `IsPastDue` on real scheduled runs. (2) `ScheduleStatus.Last` and `Next` are logged with no offset, so the log alone cannot show London or UTC. T15 should log the host time zone or an offset, for the check in plan section 8.1. (3) A future date with the wrong year passes the past-date check and the season gate. The spec rejects only past dates.
 
 - [ ] **T10 — Retry the availability read only**
   - Refs: spec 9, plan 3, plan 4.1, plan 4.2, plan 7.2 rule 7, plan 7.6, test 33
@@ -354,3 +363,4 @@ Goal: the automation is proved in production and left running.
 * 2026-10-02 — T6 — Fix the booking request and parse its response — branch `task/t6-fix-booking-request`
 * 2026-10-03 — T7 — Booking date and season gate — branch `task/t7-booking-date-season-gate`
 * 2026-10-05 — T8 — Rewrite the booking service — branch `task/t8-rewrite-booking-service`
+* 2026-10-05 — T9 — Add the HTTP trigger and finish both triggers — branch `task/t9-triggers`
