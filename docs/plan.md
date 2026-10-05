@@ -324,7 +324,9 @@ An HTTP-triggered function must respond within 230 seconds, whatever `functionTi
 
 **Accepted risk: a scheduled run run again after a restart.** The host saves the timer's schedule status only after the function finishes. If the host stops during a run and restarts before 01:00, the same run starts again, late but inside the late-run window (section 3), and can book the fallback target for hours the first run booked. Guarding against it would need a record of earlier bookings, which is a new store and new design. It is accepted instead, because the host must stop during a run that takes seconds.
 
-Spec section 9 records both exceptions, and the rules for when the manual trigger is used and when deployments are made.
+**Accepted risk: a late run just before a run day's own run.** After an outage of more than one day, the host can start a few seconds before the run time on a run day. Its late run for the earlier missed day reaches the worker just after the run time, so the late-run window (section 3) allows it, and the day's own run then books the same date again. The window cannot tell the two runs apart without the timer's schedule status, which section 3 rejects. It is accepted, because it needs both a long outage and a host start within seconds of the run time.
+
+Spec section 9 records the three exceptions, and the rules for when the manual trigger is used and when deployments are made.
 
 **Raw response bodies in logs** may contain the archer's name or email. This is accepted, because both are already public by the owner's choice (section 6).
 

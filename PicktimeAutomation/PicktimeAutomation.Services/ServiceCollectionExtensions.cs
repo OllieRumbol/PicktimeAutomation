@@ -25,7 +25,7 @@ public static class ServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configuration);
 
-        RequireBookingSchedule(configuration);
+        var bookingSchedule = RequireBookingSchedule(configuration);
 
         AddValidatedOptions<PicktimeOptions, PicktimeOptionsValidator>(services, configuration, PicktimeOptions.SectionName);
         AddValidatedOptions<ArcherOptions, ArcherOptionsValidator>(services, configuration, ArcherOptions.SectionName);
@@ -33,6 +33,7 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<LondonClock>();
+        services.AddSingleton(serviceProvider => new LateRunWindow(serviceProvider.GetRequiredService<LondonClock>(), bookingSchedule));
 
         services.AddHttpClient<IPicktimeApiService, PicktimeApiService>((serviceProvider, client) =>
         {
@@ -63,14 +64,25 @@ public static class ServiceCollectionExtensions
 
     /// <summary>
     /// A missing schedule would only put the timer function into an error state, while the rest of
-    /// the app kept running, which is easy to miss. So start-up stops here instead.
+    /// the app kept running, which is easy to miss. So start-up stops here instead. The late-run window
+    /// reads the schedule too, so an expression that does not parse also stops start-up.
     /// </summary>
-    private static void RequireBookingSchedule(IConfiguration configuration)
+    private static string RequireBookingSchedule(IConfiguration configuration)
     {
-        if (string.IsNullOrWhiteSpace(configuration[BookingScheduleSettingName]))
+        var bookingSchedule = configuration[BookingScheduleSettingName];
+
+        if (string.IsNullOrWhiteSpace(bookingSchedule))
         {
             throw new InvalidOperationException(
                 $"{BookingScheduleSettingName} must not be empty. It holds the timer trigger's NCRONTAB expression.");
         }
+
+        if (!LateRunWindow.IsValidSchedule(bookingSchedule))
+        {
+            throw new InvalidOperationException(
+                $"{BookingScheduleSettingName} must be a valid NCRONTAB expression with six fields, starting with seconds, for example \"0 5 0 * * TUE,THU,FRI\".");
+        }
+
+        return bookingSchedule;
     }
 }
