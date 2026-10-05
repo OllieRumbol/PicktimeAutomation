@@ -201,7 +201,7 @@ Goal: the booking rules in spec section 6 are implemented, covered by their test
     4. Extra tests: `LateRunWindow` resolves from the real `AddPicktimeServices` registration, and the timer's run on time does not depend on the window.
     5. `/code-review` found 7 points. Points 2 to 6 are fixed. Point 7 (the schedule string repeated in two tests) is left, because the tests pin the schedule from plan section 2. Point 1: after an outage of more than one day, a late run that reaches the worker just after a run day's run time books, and that day's own run books the same date again. The owner accepted it on 2026-10-05 as the third exception in spec section 9, recorded in plan section 4.2.
 
-- [ ] **T10 — Retry the availability read only**
+- [x] **T10 — Retry the availability read only**
   - Refs: spec 9, plan 3, plan 4.1, plan 4.2, plan 7.2 rule 7, plan 7.6, test 33
   - Depends on: T8
   - Done when:
@@ -211,6 +211,12 @@ Goal: the booking rules in spec section 6 are implemented, covered by their test
     - Test 33 passes, built from the real `AddPicktimeServices` registration.
   - Verify: the standard test command
   - Notes: Before any real booking (T14), because it sets the timeout that decides when a booking result is `Unknown`.
+    1. `AddPicktimeServices` registers two named clients, as plan section 4.2 allows. `PicktimeRead` has the standard resilience handler with its defaults. `PicktimeBooking` has no handler and a 20-second timeout. Both get the base URL and the `scantoken` header from one method. `PicktimeApiService` takes `readClient` and `bookingClient`, so the GET and the POST cannot share a client.
+    2. The standard handler's defaults also retry HTTP 408 and 429 on the GET. The owner approved this on 2026-10-05. It is recorded in plan section 4.1. HTTP 401 and 403 are never retried.
+    3. When the handler stops a GET, it throws a Polly `ExecutionRejectedException`: `TimeoutRejectedException` for a timeout, or the circuit breaker's or rate limiter's exception. `GetAvailableSlotsAsync` turns each into `PicktimeReadException`, as plan section 3 requires. The caller's cancellation still passes through, and is not retried.
+    4. Test 33 is in `PicktimeApiRegistrationTests`. Its HTTP 401 case is the existing test 32 read test, which uses the same registration and asserts one request. Extra tests: a GET timeout in the handler, the caller's cancellation through the handler, a booking network error sent once, a POST through the read client sent once, and the booking client's 20-second timeout. The tests set the retry backoff to zero with `ConfigureAll<HttpStandardResilienceOptions>`, so they do not depend on the handler's internal options name.
+    5. A check by mutation: with the two clients swapped in the registration, test 33 fails in both directions. Without `DisableForUnsafeHttpMethods`, the read-client POST test fails.
+    6. `/code-review` found 8 points and no blocker. Points 2 to 6 and 8 are fixed: the read client never retries a POST (`DisableForUnsafeHttpMethods`), every handler rejection becomes `PicktimeReadException`, the comments say "up to 3 retries", and a booking network error is tested through the real registration. Point 7 (build the service with `ActivatorUtilities`) is not done: it matches the two `HttpClient` arguments by order alone, and the named arguments are clearer. Point 1 is open for the owner: the read client keeps `HttpClient`'s default 100-second timeout, which still applies while the response body downloads, after the handler has returned. A body that stalls can make one read take up to 100 seconds, not the 30 in plan section 4.1. Plan section 4.1 says nothing is configured for the GET, so a fix, such as a 30-second `Timeout` on the read client, is a plan change.
 
 - [ ] **T11 — Handle an unknown booking result**
   - Refs: spec 6.4, spec 6.5, spec 9, plan 4.1, plan 7.4, tests 12–14
@@ -387,3 +393,4 @@ Goal: the automation is proved in production and left running.
 * 2026-10-05 — T8 — Rewrite the booking service — branch `task/t8-rewrite-booking-service`
 * 2026-10-05 — T9 — Add the HTTP trigger and finish both triggers — branch `task/t9-triggers`
 * 2026-10-05 — T9a — Book a late run inside the late-run window — branch `task/t9a-late-run-window`
+* 2026-10-05 — T10 — Retry the availability read only — branch `task/t10-retry-availability-read`

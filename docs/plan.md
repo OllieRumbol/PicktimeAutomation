@@ -276,7 +276,7 @@ So:
 
 | Endpoint | Retry policy |
 | --- | --- |
-| `GET /ia/slots` | Retry up to 3 times on network error, timeout or HTTP 5xx, with the standard resilience handler's exponential backoff, which starts at 2 seconds |
+| `GET /ia/slots` | Retry up to 3 times on network error, timeout or HTTP 5xx, with the standard resilience handler's exponential backoff, which starts at 2 seconds. The handler's defaults also retry HTTP 408 and 429, which the owner approved on 2026-10-05. HTTP 401 and 403 are never retried. |
 | `POST /ia/save/event` | **No automatic retry.** An unknown result is handled as below. |
 
 **What makes a booking result `Unknown`.** `CreateBookingAsync` returns `Unknown` for any of these, because the booking may exist:
@@ -330,7 +330,7 @@ Spec section 9 records the three exceptions, and the rules for when the manual t
 
 **Raw response bodies in logs** may contain the archer's name or email. This is accepted, because both are already public by the owner's choice (section 6).
 
-Retries on the `GET` use the standard `Microsoft.Extensions.Http.Resilience` handler. Because the policy differs per endpoint, either register two named clients, or register the handler only for the availability path. Whichever is chosen, it must be impossible to accidentally pick up an automatic retry on the booking POST.
+Retries on the `GET` use the standard `Microsoft.Extensions.Http.Resilience` handler. Because the policy differs per endpoint, either register two named clients, or register the handler only for the availability path. Whichever is chosen, it must be impossible to accidentally pick up an automatic retry on the booking POST. Two named clients are registered: a read client with the handler, and a booking client with none and the 20-second timeout. The handler is added to the read client only, never through `ConfigureHttpClientDefaults`, which would add it to both. The handler is also set never to retry a `POST`, so a booking sent through the read client by mistake is still sent once. Test 33 fails if the two are swapped.
 
 ---
 

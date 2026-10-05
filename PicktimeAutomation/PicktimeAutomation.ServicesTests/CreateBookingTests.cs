@@ -286,6 +286,12 @@ public sealed class CreateBookingTests
             Email = "archer@example",
         });
 
-        return new PicktimeApiService(httpClient, picktimeOptions, archerOptions, new FakeTimeProvider());
+        // These tests send only the booking request, so one client can stand in for both.
+        return new PicktimeApiService(
+            readClient: httpClient,
+            bookingClient: httpClient,
+            picktimeOptions,
+            archerOptions,
+            new FakeTimeProvider());
     }
 }
