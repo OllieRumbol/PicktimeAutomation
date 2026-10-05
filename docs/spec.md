@@ -3,7 +3,7 @@
 > **What this document is for:** It answers *what are we building, and why?* It is the source of truth for requirements.
 
 Status: Approved
-Last updated: 2026-09-30
+Last updated: 2026-10-05
 
 This document is the record of requirements for this project. It says what must be true, not how it is achieved. Each fact is stated once. Keep it updated as requirements change.
 
@@ -249,7 +249,21 @@ This is a verification task rather than a blocker. See section 7.
 
 Because the offset is exactly 7 days, the weekday is preserved. A Tuesday run books the following Tuesday. A full week is 9 bookings across 3 runs.
 
-**A late run books nothing.** A scheduled run that starts late, after a missed schedule, books nothing, because the run date would no longer be the scheduled day. It logs a warning that the run was missed. A missed run is caught up with the manual trigger (section 6.7).
+**A late run books only inside the late-run window.** A scheduled run can start late, for example while the host starts up. A late run still books when it starts on a run day, in London time, before 01:00. The booking date is then correct, because it is London today plus 7 days, exactly as for a run on time.
+
+A late run that starts at 01:00 or later, or on a day that is not a run day, books nothing, because the booking date might not be one a scheduled run would book. It logs a warning that the run was missed. A missed run is caught up with the manual trigger (section 6.7).
+
+After an outage of more than one day, only the latest run day is booked, if the late run starts on it before 01:00. An earlier run day missed in the outage is not reported separately. The absence of its confirmation emails shows it.
+
+Worked examples, for the run scheduled at 00:05 London on Tuesday 13 October 2026:
+
+| Late run starts (London) | Result |
+| --- | --- |
+| Tuesday 13 October, 00:05:20 | Books Tuesday 20 October |
+| Tuesday 13 October, 00:59:59 | Books Tuesday 20 October |
+| Tuesday 13 October, 01:00:00 | Missed. Books nothing. |
+| Wednesday 14 October, 00:30 | Missed. Books nothing. Wednesday is not a run day. |
+| Thursday 15 October, 00:30, after an outage since Tuesday | Books Thursday 22 October, as Thursday's own run would. Tuesday's missed run is not reported separately. |
 
 ### 6.2 Time zone rules
 
@@ -353,7 +367,9 @@ A run outside the season is reported as skipped, and appears in the run record l
 
 ### 6.6 Double booking
 
-No separate state store is needed. A slot already booked, whether by this automation or by hand, is absent from the availability response. The availability read is therefore the guard against double booking.
+No separate state store is needed. A slot already booked, whether by this automation or by hand, is absent from the availability response. The availability read is therefore the guard against double booking on one target.
+
+It does not stop a second run for the same booking date from booking the fallback target for an hour already held on the preferred target. So two runs for the same booking date must not both book. Section 9 records the two cases where this is accepted, and the rules that keep them rare.
 
 ### 6.7 Manual trigger
 
@@ -419,7 +435,9 @@ One observation on timing: bookings are made by hand until the automation is dep
 * Target 2b is preferred and 3a is used per hour when 2b is taken.
 * Runs outside the season do nothing, and say so in the logs.
 * No secret is in the repository's current files, and no personal detail is in the source code.
-* The automation never holds two bookings for the same hour, on the same target or different targets, even when a booking request times out. The one accepted exception is a manual run started at the same time as a scheduled run. The manual trigger is not used around 00:05 on a run day.
+* The automation never holds two bookings for the same hour, on the same target or different targets, even when a booking request times out. Two exceptions are accepted, because each needs an unusual event and only one person runs the automation:
+  1. A manual run for the same booking date as a scheduled run. The manual trigger is not used between 00:05 and 01:00 on a run day, because a late scheduled run can start at any time in that window (section 6.1). It is not used for a booking date that a run has already booked.
+  2. A scheduled run that is run again after the host stops in the middle of it, and restarts before 01:00 (section 6.1). The second run can book the fallback target for hours the first run booked. No deployment is made between 00:05 and 01:00 on a run day.
 * All tests pass.
 * Deployment is automated, and a failing test stops a deployment.
 * One real booking has been confirmed on the Picktime site from a run in Azure, and its confirmation email arrived.

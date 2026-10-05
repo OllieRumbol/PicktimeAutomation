@@ -54,7 +54,7 @@ Bind these with the options pattern and validate them at start-up, so a missing 
 | `Booking:Hours` | At least one hour. Each is a whole number from 0 to 23, with no duplicates. |
 | `Booking:Targets` | At least one target. Each has a non-empty `Name` and `ResourceId`, and names are unique. |
 | `Booking:SeasonStart`, `Booking:SeasonEnd` | Valid `MM-dd` dates. The season may wrap the year end, as 1 October to 31 March does. |
-| `BookingSchedule` | Not empty (below) |
+| `BookingSchedule` | Not empty, and a valid NCRONTAB expression with a seconds field (below) |
 
 The example values for days ahead, hours, targets and season come from spec sections 6.1 and 6.3. `DaysAhead` and the season dates are settings even though spec section 3, goal 4 does not require it: they cost nothing, and Picktime's release window or the club's season could change.
 
@@ -82,7 +82,7 @@ There is deliberately no setting for `booking_addnl_fields`. It is a constant, b
 
 * `BookingSchedule` is the single source of truth for when the automation runs. There is deliberately no separate `RunDays` setting, because a second value describing the same schedule would be a second place to change and a second place to get wrong.
 * The name is flat, with no `Booking:` prefix, because the Functions host reads it directly. It is not bound to the options classes.
-* Without a check, a missing `BookingSchedule` would only put the timer function in an error state, while the HTTP trigger kept running, which is easy to miss. So the start-up validation in `AddPicktimeServices` also checks that `BookingSchedule` is set, and stops start-up if it is not. A mistyped expression is caught by the check in section 8.1 that the next scheduled run is 00:05 London time.
+* Without a check, a missing `BookingSchedule` would only put the timer function in an error state, while the HTTP trigger kept running, which is easy to miss. So the start-up validation in `AddPicktimeServices` also checks that `BookingSchedule` is set, and stops start-up if it is not. It also parses the expression, because the late-run window in section 3 reads it, so an expression that does not parse stops start-up. It requires the six-field form, with seconds. The host also accepts five fields, but this setting has always had six, and one accepted form keeps the window's parse and the host's parse the same. A valid expression with the wrong time or days is caught by the check in section 8.1 that the next scheduled run is 00:05 London time.
 
 ---
 
@@ -138,7 +138,23 @@ That placement is deliberate. If the trigger computed the date, the date rule �
 1. `CreateBuilder` loads `appsettings.json` automatically. With `new HostBuilder()` it is not loaded, so the worker log levels in section 5.2 would be silently ignored.
 2. The HTTP trigger takes an ASP.NET Core `HttpRequest`, which tests 27–29 build from a plain `DefaultHttpContext`. The built-in `HttpRequestData` model needs a mocked `FunctionContext` instead.
 
-**The timer trigger** logs `TimerInfo.IsPastDue` and the schedule's last and next occurrence on every run, so a wrong value is visible from the first scheduled run. If `IsPastDue` is set, the run was missed and has started late, so the trigger does not call the booking service, as spec section 6.1 requires. It logs a warning, and writes the summary event with the `Missed` verdict (section 3.1). Working out the date from the missed occurrence's scheduled time was rejected: it needs the timer's schedule status, which is fiddly and hard to test. Skipping is safe: the worst case is a warning and a manual catch-up, never a wrong booking. A run that is only a little late on the same day is also skipped.
+**The timer trigger** logs `TimerInfo.IsPastDue` and the schedule's last and next occurrence on every run, so a wrong value is visible from the first scheduled run. If `IsPastDue` is set, the run has started late. It still books when it is inside the late-run window that spec section 6.1 requires. Otherwise the trigger does not call the booking service: it logs a warning, and writes the summary event with the `Missed` verdict (section 3.1). A late run inside the window books exactly like a run on time, with no date, so the service computes London today plus `DaysAhead`. For a late run, the trigger logs whether the window allowed it, so a late run that booked is visible in the logs.
+
+**`LateRunWindow`** is one small injected class in the `Dates` folder of `PicktimeAutomation.Services`, with `bool AllowsLateRun()`. Its constructor takes `LondonClock` and the raw `BookingSchedule` string, and parses the string once. It returns `true` only when both are true:
+
+1. London time now is before 01:00, a constant, because spec section 6.1 sets it.
+2. The `BookingSchedule` expression has an occurrence on London today, at or before London time now. That makes London today a run day, which gives the worked examples in spec section 6.1, including the outage case.
+
+`LateRunWindow` gets the time from `LondonClock`, which gains a `Now()` method next to `Today()`, so it is testable with `FakeTimeProvider`. `AddPicktimeServices` registers it as a singleton.
+
+The 01:00 cut-off assumes a run time just after midnight. If `BookingSchedule` moves the run time to 01:00 or later, every late run is `Missed`. That failure is safe, because it books nothing, and the warning shows it.
+
+The expression is read with `NCrontab.Signed`, the library the Functions host uses to read the timer schedule. So the window check and the host read the schedule the same way. The host reads it in London time, because `WEBSITE_TIME_ZONE` is set (section 8.1), and the window check reads it in London time too. The package is free and open source, and adds no cost.
+
+Two alternatives were rejected:
+
+* Reading the missed occurrence from `TimerInfo.ScheduleStatus`. Microsoft's documentation does not say what it holds on a late run, and its times carry no offset (checked on 2026-10-05). A rule built on it could not be tested without a real late run.
+* A separate setting for the run days. Section 2 makes `BookingSchedule` the single source of truth for when the automation runs.
 
 **The HTTP trigger** reads `bookingDate` from the query string only, as spec section 6.7 requires. It checks the date before calling the booking service. It returns the `BookingSummary` as JSON with HTTP 200, and HTTP 400 for an invalid or past date. An unexpected error is handled by the exception middleware below.
 
@@ -154,7 +170,7 @@ The triggers contain no try/catch, so they stay thin adapters, and a function ad
 
 A try/catch in each trigger was rejected: it repeats the same handling in two places, and the owner's C# standard says to handle unexpected exceptions in one place, which for Azure Functions is a worker middleware.
 
-**`LondonClock`** is one small injected class with `DateOnly Today()`. It is built on the injected `TimeProvider` and the constant `Europe/London`, resolved with `TimeZoneInfo.FindSystemTimeZoneById`. The booking service uses it for the default booking date, and the HTTP trigger uses it for the past-date check. So the date rule stays in one place (section 7.2, rule 3), and both uses are testable with `FakeTimeProvider`.
+**`LondonClock`** is one small injected class with `DateOnly Today()`, and `DateTime Now()` for the late-run window (section 3). `Now()` returns London local time as a `DateTime`, not a `DateTimeOffset`, because `NCrontab.Signed` works on `DateTime` values in the schedule's own time zone. It is built on the injected `TimeProvider` and the constant `Europe/London`, resolved with `TimeZoneInfo.FindSystemTimeZoneById`. The booking service uses it for the default booking date, and the HTTP trigger uses it for the past-date check. So the date rule stays in one place (section 7.2, rule 3), and both uses are testable with `FakeTimeProvider`.
 
 ### 3.1 Model changes
 
@@ -196,7 +212,7 @@ public enum RunVerdict { Success, Partial, Failure, Skipped, AuthenticationFaile
 | `Partial` | At least one hour is `Booked` or `Unconfirmed`, but not all configured hours are `Booked`. |
 | `Failure` | No hour is `Booked` or `Unconfirmed`. |
 | `Skipped` | The booking date is outside the season. No hours are attempted. |
-| `Missed` | A late timer run (section 3). The booking service is not called, and the booking date is left empty. |
+| `Missed` | A late timer run outside the late-run window (section 3). The booking service is not called, and the booking date is left empty. |
 | `Error` | The exception middleware (section 3) caught an unexpected exception. The booking date is left empty. |
 
 A skipped run still returns a `BookingSummary`, with zero counts, and still writes the summary event in section 5.3. So it appears in the section 5.4 query like any other run, as spec section 6.5 requires. The HTTP trigger returns it with HTTP 200. `Missed` and `Error` runs also write the summary event, so every run appears in the query, whatever its outcome.
@@ -304,7 +320,11 @@ An HTTP-triggered function must respond within 230 seconds, whatever `functionTi
 | Invalid or past `bookingDate` on the HTTP trigger | Return HTTP 400 with the reason, and do not call the booking service. This meets spec section 6.7. |
 | Unexpected error in any function | Handled by the exception middleware (section 3): it logs the exception and writes the `Error` summary event. For the HTTP trigger it returns HTTP 500 with a short message: "The booking run failed. See the logs." No stack trace or internal detail is returned. This meets spec section 6.7. |
 
-**Accepted risk: a manual run at the same time as a scheduled run.** Two runs in parallel could both see an hour as free and both book it. Guarding against it would need a lock shared between runs. It is accepted instead, because only one person uses the manual trigger. Spec section 9 records this as the one accepted exception, with its rule: do not run the manual trigger around 00:05 on a run day.
+**Accepted risk: a manual run at the same time as a scheduled run.** Two runs in parallel could both see an hour as free and both book it. Guarding against it would need a lock shared between runs. It is accepted instead, because only one person uses the manual trigger.
+
+**Accepted risk: a scheduled run run again after a restart.** The host saves the timer's schedule status only after the function finishes. If the host stops during a run and restarts before 01:00, the same run starts again, late but inside the late-run window (section 3), and can book the fallback target for hours the first run booked. Guarding against it would need a record of earlier bookings, which is a new store and new design. It is accepted instead, because the host must stop during a run that takes seconds.
+
+Spec section 9 records both exceptions, and the rules for when the manual trigger is used and when deployments are made.
 
 **Raw response bodies in logs** may contain the archer's name or email. This is accepted, because both are already public by the owner's choice (section 6).
 
@@ -486,7 +506,7 @@ The tests that stop a duplicate booking. The most valuable in the suite, because
 
 ### 7.5 The date rule and time zones
 
-Spec section 6.2 calls this the most likely source of a silent, wrong-day booking, so it gets its own group. All four use `FakeTimeProvider` with an explicit time zone, so they are deterministic and do not depend on the machine running them.
+Spec section 6.2 calls this the most likely source of a silent, wrong-day booking, so it gets its own group. All five use `FakeTimeProvider` with an explicit time zone, so they are deterministic and do not depend on the machine running them.
 
 | # | Test | Defect it catches |
 | --- | --- | --- |
@@ -494,6 +514,7 @@ Spec section 6.2 calls this the most likely source of a silent, wrong-day bookin
 | 16 | A run during GMT computes the booking date correctly | A fix for BST that breaks the rest of the season |
 | 17 | A run at 00:05 London on Friday 23 October 2026, in BST, books Friday 30 October 2026, in GMT, across the clock change on Sunday 25 October | The edge case nobody tests by hand |
 | 18 | With no date supplied, the service computes London today plus the configured `DaysAhead` | The default path diverging from the explicit one |
+| 36 | `LateRunWindow` gives the result in each worked example in spec section 6.1, with the scheduled run in BST, and once more in GMT | A run delayed by start-up books nothing, or a late run on an unscheduled day books the wrong date |
 
 ### 7.6 API client — `PicktimeAutomation.ServicesTests`
 
@@ -523,13 +544,13 @@ Four tests, deliberately. Both triggers are thin adapters. The only logic is the
 | 27 | The exception middleware, given a function that throws, logs the exception and writes the summary event with the `Error` verdict. For an HTTP function it returns 500 with no internal detail. The test uses a fake `FunctionContext`. | A crashed run missing from the run record, a stack trace leaked to the caller, or a function left without error handling |
 | 28 | The HTTP trigger passes a supplied date through unchanged, and returns the run summary as JSON | The manual trigger behaving differently from the scheduled one |
 | 29 | A malformed or past `bookingDate` returns 400, and the booking service is not called. Today is accepted, including at 00:30 London in BST, when the UTC date is still the day before. | A typo in a manual run books the wrong day, or crashes, or a valid same-day run is rejected near midnight |
-| 34 | A timer run with `IsPastDue` set does not call the booking service, logs a warning, and writes the summary event with the `Missed` verdict | A late run books a day that was never scheduled, or a missed night leaves no record |
+| 34 | A timer run with `IsPastDue` set, outside the late-run window, does not call the booking service, logs a warning, and writes the summary event with the `Missed` verdict. Inside the window, it calls the booking service with no date. | A late run books a day that was never scheduled, a missed night leaves no record, or a run delayed by start-up books nothing |
 
 ### 7.8 Configuration — `PicktimeAutomation.ServicesTests`
 
 | # | Test | Defect it catches |
 | --- | --- | --- |
-| 35 | Each validation rule in section 2 stops start-up with a message naming the setting, including a missing `Picktime:ScanToken` and a missing `BookingSchedule`. A season that wraps the year end is accepted. | A bad setting that is only discovered at 00:05 |
+| 35 | Each validation rule in section 2 stops start-up with a message naming the setting, including a missing `Picktime:ScanToken`, and a missing or unparseable `BookingSchedule`. A season that wraps the year end is accepted. | A bad setting that is only discovered at 00:05 |
 
 ---
 
@@ -591,7 +612,7 @@ Do not install Azurite with `npm install -g azurite`. This machine's Node.js is 
 
 Checked on 2026-10-01, in T2: Azurite started this way, and `func start` then listed the timer trigger.
 
-**The timer is disabled for local runs.** `local.settings.json` sets `AzureWebJobs.TargetBookingFunction.Disabled` to `true`. Without it, `func start` can make real calls to Picktime: the timer keeps a record of its runs in Azurite, and when it sees a missed scheduled run it fires at once. The late-run check (section 3) prevents this only once it is built, and only for the timer.
+**The timer is disabled for local runs.** `local.settings.json` sets `AzureWebJobs.TargetBookingFunction.Disabled` to `true`. Without it, `func start` can make real calls to Picktime: the timer keeps a record of its runs in Azurite, and when it sees a missed scheduled run it fires at once. The late-run check (section 3) does not prevent this. A missed run that fires between 00:05 and 01:00 on a run day is inside the late-run window, and books. So the `Disabled` setting is the only protection.
 
 This happened on 2026-10-02. A `func start` on a Friday morning fired the missed 00:05 run, which sent three real booking requests to Picktime. No booking was made only because defect 1 in spec section 4.1 made every request invalid. Once defect 1 is fixed, the same mistake would make real bookings.
 
