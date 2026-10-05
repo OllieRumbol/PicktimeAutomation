@@ -354,7 +354,7 @@ After an unknown result, the hour ends only as `Booked` or `Unconfirmed`, never 
 * b. If the token is rejected by the second read or by the further attempt, record `Unconfirmed` for this hour, then stop the run as for any rejected token.
 * If the second read fails for any other reason, or the further attempt fails in any other way, record `Unconfirmed`.
 
-The owner approved rules a and b on 2026-10-05.
+The owner approved rules a and b, and their use for the further attempt, on 2026-10-05.
 
 ### 6.5 Outcome per hour
 
