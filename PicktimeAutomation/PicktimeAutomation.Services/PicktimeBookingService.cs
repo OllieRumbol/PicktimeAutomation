@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Options;
 using PicktimeAutomation.Models;
+using PicktimeAutomation.Services.Dates;
 using PicktimeAutomation.Services.Interfaces;
 
 namespace PicktimeAutomation.Services;
@@ -8,19 +9,28 @@ public class PicktimeBookingService : IPicktimeBookingService
 {
     private readonly IPicktimeApiService _api;
     private readonly BookingOptions _bookingOptions;
+    private readonly LondonClock _londonClock;
 
-    public PicktimeBookingService(IPicktimeApiService api, IOptions<BookingOptions> bookingOptions)
+    public PicktimeBookingService(IPicktimeApiService api, IOptions<BookingOptions> bookingOptions, LondonClock londonClock)
     {
         ArgumentNullException.ThrowIfNull(api);
         ArgumentNullException.ThrowIfNull(bookingOptions);
+        ArgumentNullException.ThrowIfNull(londonClock);
 
         _api = api;
         _bookingOptions = bookingOptions.Value;
+        _londonClock = londonClock;
     }
 
-    public async Task<BookingSummary> BookArcheryIndoorTarget()
+    public async Task<BookingSummary> BookArcheryIndoorTargetAsync(DateOnly? bookingDate = null, CancellationToken ct = default)
     {
-        var futureBookingDate = DateTime.Today.AddDays(_bookingOptions.DaysAhead);
+        var date = bookingDate ?? _londonClock.Today().AddDays(_bookingOptions.DaysAhead);
+
+        // The gate is on the booking date, not the run date, so the last run in September books 1 October (spec section 6.3).
+        if (!SeasonGate.IsInSeason(date, _bookingOptions.SeasonStart, _bookingOptions.SeasonEnd))
+        {
+            return new BookingSummary { BookingDate = date, Verdict = RunVerdict.Skipped };
+        }
 
         // Only the preferred target is tried. The per-hour fallback to the next target
         // comes with the booking algorithm in spec section 6.4.
@@ -29,11 +39,10 @@ public class PicktimeBookingService : IPicktimeBookingService
         var attempts = new List<BookingAttempt>();
         foreach (var hour in _bookingOptions.Hours)
         {
-            var bookingDateTime = long.Parse(futureBookingDate.ToString("yyyyMMdd") + $"{hour:00}00");
+            var bookingDateTime = PicktimeTimestamp.ToNumber(date, hour);
             var request = new BookingRequest(bookingDateTime, preferredTarget.ResourceId);
 
-            // T7 adds the caller's CancellationToken to this entry point.
-            var result = await _api.CreateBookingAsync(request, CancellationToken.None);
+            var result = await _api.CreateBookingAsync(request, ct);
             attempts.Add(ToBookingAttempt(result, hour, preferredTarget.Name));
         }
 
@@ -42,7 +51,7 @@ public class PicktimeBookingService : IPicktimeBookingService
 
         return new BookingSummary
         {
-            BookingDate = DateOnly.FromDateTime(futureBookingDate),
+            BookingDate = date,
             Attempts = attempts,
             Verdict = allBooked ? RunVerdict.Success : RunVerdict.Failure
         };

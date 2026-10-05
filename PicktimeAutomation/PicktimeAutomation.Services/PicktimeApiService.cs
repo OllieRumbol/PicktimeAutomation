@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Options;
 using PicktimeAutomation.Models;
+using PicktimeAutomation.Services.Dates;
 using PicktimeAutomation.Services.Exceptions;
 using PicktimeAutomation.Services.Interfaces;
 using System.Globalization;
@@ -95,8 +96,8 @@ public class PicktimeApiService : IPicktimeApiService
         var queryParameters = new List<KeyValuePair<string, string>>
         {
             new("schedulerId", resourceId),
-            new("dateAndTime", ToPicktimeMidnight(date)),
-            new("endDate", ToPicktimeMidnight(date.AddDays(1))),
+            new("dateAndTime", PicktimeTimestamp.Format(date, 0)),
+            new("endDate", PicktimeTimestamp.Format(date.AddDays(1), 0)),
             new("locationId", _picktimeOptions.LocationId),
             new("accountId", _picktimeOptions.AccountId),
             new("duration", SlotLengthInMinutes),
@@ -116,14 +117,6 @@ public class PicktimeApiService : IPicktimeApiService
             queryParameters.Select(parameter => $"{parameter.Key}={Uri.EscapeDataString(parameter.Value)}"));
 
         return $"{SlotsPath}?{query}";
-    }
-
-    /// <summary>
-    /// Midnight at the start of the day, as a Picktime timestamp (<c>yyyyMMddHHmm</c>).
-    /// </summary>
-    private static string ToPicktimeMidnight(DateOnly date)
-    {
-        return date.ToString("yyyyMMdd", CultureInfo.InvariantCulture) + "0000";
     }
 
     private async Task<string> ReadSlotsResponseBodyAsync(string requestUri, DateOnly date, CancellationToken ct)

@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using PicktimeAutomation.Models;
+using PicktimeAutomation.Services.Dates;
 using PicktimeAutomation.Services.Interfaces;
 using PicktimeAutomation.Services.Validators;
 
@@ -31,6 +32,7 @@ public static class ServiceCollectionExtensions
         AddValidatedOptions<BookingOptions, BookingOptionsValidator>(services, configuration, BookingOptions.SectionName);
 
         services.AddSingleton(TimeProvider.System);
+        services.AddSingleton<LondonClock>();
 
         services.AddHttpClient<IPicktimeApiService, PicktimeApiService>((serviceProvider, client) =>
         {
