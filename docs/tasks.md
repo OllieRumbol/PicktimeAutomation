@@ -300,7 +300,7 @@ Goal: one real booking made from a local run, with the duplicate-booking protect
 Goal: every run can be understood from its logs.
 
 - [ ] **T15 — Logging and observability**
-  - Refs: spec 3 goal 5, spec 4.1 defect 9, spec 5.2, spec 5.3, spec 6.2, spec 6.3, spec 6.5, plan 4.2, plan 5.1, plan 5.2, plan 5.3
+  - Refs: spec 3 goal 5, spec 4.1 defect 9, spec 5.2, spec 5.3, spec 6.2, spec 6.3, spec 6.5, plan 4.2, plan 5.1, plan 5.2, plan 5.3, test 37
   - Depends on: T8, T9
   - Done when:
     - The worker sends logs to Application Insights through OpenTelemetry, set up as in plan section 5.2: the two packages, `Program.cs`, `host.json` and `appsettings.json`.
@@ -311,6 +311,7 @@ Goal: every run can be understood from its logs.
     - `booking_email_confirmation` is logged per booking, from `BookingResult.EmailConfirmationSent`.
     - Logging is structured, with named placeholders.
     - Every run writes one structured summary event, as in plan section 5.3, including `FailedReadCount`. That covers normal, skipped, `Missed` and `Error` runs. `BookingLoggingExtensions` is the only place it is written.
+    - Test 37 passes: a normal run and a skipped run, through each trigger, write exactly one summary event, with every property the plan section 5.4 query reads.
     - A malformed response body is logged at Warning level, cut to its first 1 KB.
     - HTTP 401 or 403 logs an error that names authentication as the cause.
     - An unexpected exception on one hour is logged with the exception itself, not only its message, in the catch block in `PicktimeBookingService` (T8 note 6).
@@ -323,6 +324,7 @@ Goal: every run can be understood from its logs.
   - Notes:
     1. Added on 2026-10-06, from the `/review-plan` findings G2 and G4, with the owner's approval. The three log items above were left for T15 by earlier tasks, and were not in this list.
     2. The second Verify run makes a real booking. Do not use the manual trigger between 00:05 and 01:00 on a run day (spec section 9, exception 1).
+    3. The triggers write the summary for a normal or skipped run, not the booking service (plan section 5.3). Decided by the owner on 2026-10-06, from the `/review-plan` finding B1. Keep the trigger calls. Do not add a summary write to the booking service.
 
 ## Phase 5 — Infrastructure and deployment
 

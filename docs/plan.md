@@ -382,9 +382,11 @@ After the first run in Azure, confirm that the Invocations view shows data with 
 1. **Start** — the times and booking date required by spec section 6.2, and the season gate result required by spec section 6.3. A `Missed` run never reaches the booking service, so the timer trigger logs the same times and booking date itself. The timer trigger also logs the schedule's last and next times with their UTC offset, so the log shows whether they are London time or UTC.
 2. **Availability** — the free hours found for each target.
 3. **Each attempt** — hour, target name, outcome, the booking id on success, and `booking_email_confirmation`. An hour that throws unexpectedly (section 4.2) logs the exception itself, not only its message, because the summary does not hold it.
-4. **Summary** — one event, described below. It is written for every run, whatever the outcome: by the booking service for a normal or skipped run, by the timer trigger for a `Missed` run, and by the exception middleware for an `Error` run (section 3). So no run is silent, as spec section 5.3 requires.
+4. **Summary** — one event, described below. It is written once for every run, whatever the outcome: by the trigger that started the run, after the booking service returns, for a normal or skipped run; by the timer trigger for a `Missed` run; and by the exception middleware for an `Error` run (section 3). So every run appears in the run record, as spec section 6.5 requires.
 
-Use structured logging with named placeholders throughout, so values land in `customDimensions` and are queryable. Keep `BookingLoggingExtensions` as the single place summaries are written. The timer trigger and the exception middleware call it too.
+Use structured logging with named placeholders throughout, so values land in `customDimensions` and are queryable. Keep `BookingLoggingExtensions` as the single place summaries are written. Both triggers and the exception middleware call it.
+
+**Why the triggers write the summary, not the booking service.** The booking service returns the `BookingSummary`, and the HTTP trigger also returns it as JSON. `BookingLoggingExtensions` is in the Functions project, which the services project does not reference. The `Missed` and `Error` summaries must be written in the Functions project anyway, because the booking service never runs for them. So every summary is written in one layer. Moving the normal and skipped summaries into the booking service was rejected on 2026-10-06: it splits the writers across two projects, and a trigger call left in place during the move would count every run twice. Test 37 checks that each run writes exactly one summary.
 
 **The summary is one event with named properties**, not a sentence of interpolated text. That is what makes the dashboard query below possible:
 
@@ -543,7 +545,7 @@ Not tested: that the token is never written to a log. Asserting the absence of a
 
 ### 7.7 Function triggers — `PicktimeAutomation.AzureFunctionsTests`
 
-Four tests, deliberately. Both triggers are thin adapters. The only logic is the HTTP trigger's input check, the timer's late-run check and the exception middleware, so there is nothing else here worth asserting.
+Five tests, deliberately. Both triggers are thin adapters. The only logic is the HTTP trigger's input check, the timer's late-run check, the exception middleware and the summary each trigger writes (section 5.3), so there is nothing else here worth asserting.
 
 | # | Test | Defect it catches |
 | --- | --- | --- |
@@ -551,6 +553,7 @@ Four tests, deliberately. Both triggers are thin adapters. The only logic is the
 | 28 | The HTTP trigger passes a supplied date through unchanged, and returns the run summary as JSON | The manual trigger behaving differently from the scheduled one |
 | 29 | A malformed or past `bookingDate` returns 400, and the booking service is not called. Today is accepted, including at 00:30 London in BST, when the UTC date is still the day before. | A typo in a manual run books the wrong day, or crashes, or a valid same-day run is rejected near midnight |
 | 34 | A timer run with `IsPastDue` set, outside the late-run window, does not call the booking service, logs a warning, and writes the summary event with the `Missed` verdict. Inside the window, it calls the booking service with no date. | A late run books a day that was never scheduled, a missed night leaves no record, or a run delayed by start-up books nothing |
+| 37 | A normal run and a skipped run, through each trigger, write exactly one summary event. It has every property that the section 5.4 query reads: `BookingDate`, `BookedCount`, `NoAvailabilityCount`, `FailedCount`, `UnconfirmedCount`, `FailedReadCount` and `Verdict`. | A second summary writer added by mistake, so the dashboard counts every run twice, or a missing property that leaves a dashboard column empty |
 
 ### 7.8 Configuration — `PicktimeAutomation.ServicesTests`
 
