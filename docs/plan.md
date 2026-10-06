@@ -80,7 +80,7 @@ There is deliberately no setting for `booking_addnl_fields`. It is a constant, b
 
 * `BookingSchedule` is the single source of truth for when the automation runs. There is deliberately no separate `RunDays` setting, because a second value describing the same schedule would be a second place to change and a second place to get wrong.
 * The name is flat, with no `Booking:` prefix, because the Functions host reads it directly. It is not bound to the options classes.
-* Without a check, a missing `BookingSchedule` would only put the timer function in an error state, while the HTTP trigger kept running, which is easy to miss. So the start-up validation in `AddPicktimeServices` also checks that `BookingSchedule` is set, and stops start-up if it is not. It also parses the expression, because the late-run window in section 3 reads it, so an expression that does not parse stops start-up. It requires the six-field form, with seconds. The host also accepts five fields, but this setting has always had six, and one accepted form keeps the window's parse and the host's parse the same. A valid expression with the wrong time or days is caught by the check in section 8.1 that the next scheduled run is 00:05 London time.
+* Without a check, a missing `BookingSchedule` would only put the timer function in an error state, while the HTTP trigger kept running, which is easy to miss. So the start-up validation in `AddPicktimeServices` also checks that `BookingSchedule` is set, and stops start-up if it is not. It also parses the expression, because the late-run window in section 3 reads it, so an expression that does not parse stops start-up. It requires the six-field form, with seconds. The host also accepts five fields, but this setting has always had six, and one accepted form keeps the window's parse and the host's parse the same. A valid expression with the wrong time or days is caught by the trigger time check after deployment, in section 8.1.
 
 ---
 
@@ -366,21 +366,22 @@ No sampling is configured in the worker. Sampling is designed for high volume, a
 
 The libraries are free and open source. The logs go to the same Application Insights resource, within the same free allowance (section 8.3), so this choice adds no cost.
 
-Three ways to reach the logs, in increasing order of effort:
+Two ways to reach the logs, in increasing order of effort:
 
 | Route | Where | Use it for |
 | --- | --- | --- |
 | **Invocations** | Function App → Functions → the function → Invocations | The normal check. A row per run, click through for that run's log lines. |
-| **Log stream** | Function App → Log stream | Watching a manual run live. Nothing is retained. |
 | **Logs (KQL)** | Application Insights → Logs | History, and the pinned dashboard query below. |
+
+Log stream in the portal is not available. When the host uses OpenTelemetry, the Azure portal does not support log streaming (Microsoft Learn, "Use OpenTelemetry with Azure Functions", checked on 2026-10-06). A manual run returns its summary in the HTTP response, and its log lines are in Logs (KQL) after it finishes.
 
 After the first run in Azure, confirm that the Invocations view shows data with OpenTelemetry enabled. If it does not, Logs (KQL) becomes the normal check.
 
 ### 5.3 What each run logs
 
-1. **Start** — the times and booking date required by spec section 6.2, and the season gate result required by spec section 6.3.
+1. **Start** — the times and booking date required by spec section 6.2, and the season gate result required by spec section 6.3. A `Missed` run never reaches the booking service, so the timer trigger logs the same times and booking date itself. The timer trigger also logs the schedule's last and next times with their UTC offset, so the log shows whether they are London time or UTC.
 2. **Availability** — the free hours found for each target.
-3. **Each attempt** — hour, target name, outcome, the booking id on success, and `booking_email_confirmation`.
+3. **Each attempt** — hour, target name, outcome, the booking id on success, and `booking_email_confirmation`. An hour that throws unexpectedly (section 4.2) logs the exception itself, not only its message, because the summary does not hold it.
 4. **Summary** — one event, described below. It is written for every run, whatever the outcome: by the booking service for a normal or skipped run, by the timer trigger for a `Missed` run, and by the exception middleware for an `Error` run (section 3). So no run is silent, as spec section 5.3 requires.
 
 Use structured logging with named placeholders throughout, so values land in `customDimensions` and are queryable. Keep `BookingLoggingExtensions` as the single place summaries are written. The timer trigger and the exception middleware call it too.
@@ -594,7 +595,10 @@ Plus every setting in section 2.
 
 Microsoft labels the Consumption plan "legacy" and recommends Flex Consumption for new apps. On Windows the Consumption plan is still generally available, with no retirement date (checked on 2026-09-30). Check this again before each season.
 
-The code is unaffected by this choice. See section 3.3. After deployment, confirm from the logs that the next scheduled run is 00:05 London time, not 00:05 UTC.
+The code is unaffected by this choice. See section 3.3. After deployment, check the trigger time:
+
+* **While BST is in force**, until the last Sunday of October (spec section 6.2): in Logs (KQL), the first scheduled run's UTC timestamp must be 23:05 on the day before the run day. A run at 00:05 UTC means the setting is missing.
+* **While GMT is in force:** London time equals UTC, so the logs cannot show the difference. Check instead that `WEBSITE_TIME_ZONE` is `GMT Standard Time` in the Function App's environment variables.
 
 ### 8.2 Local prerequisites
 

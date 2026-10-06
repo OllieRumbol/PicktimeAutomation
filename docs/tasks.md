@@ -313,9 +313,16 @@ Goal: every run can be understood from its logs.
     - Every run writes one structured summary event, as in plan section 5.3, including `FailedReadCount`. That covers normal, skipped, `Missed` and `Error` runs. `BookingLoggingExtensions` is the only place it is written.
     - A malformed response body is logged at Warning level, cut to its first 1 KB.
     - HTTP 401 or 403 logs an error that names authentication as the cause.
+    - An unexpected exception on one hour is logged with the exception itself, not only its message, in the catch block in `PicktimeBookingService` (T8 note 6).
+    - The timer trigger logs the schedule's last and next times with their UTC offset, so the log shows London time or UTC (T9 note 9, point 2).
+    - A `Missed` run logs the current UTC time, the current London time and the booking date, as every run must (spec section 6.2). It never reaches the booking service, so it does not get them from the start line.
     - The `scantoken` is never logged. Checked by review.
-  - Verify: the standard test command, then one local run through the HTTP trigger with the log output checked
+  - Verify: the standard test command, then two local runs through the HTTP trigger with the log output checked:
+    1. A date outside the season. This books nothing, and checks the skipped-run lines.
+    2. One real booking, to check the availability and attempt lines. Follow the T14 instructions: set only `Booking:Hours:0`, choose a date in the season and the 7-day window that you have not already booked, restore the other hours afterwards, and cancel the booking by hand if it is not wanted.
   - Notes:
+    1. Added on 2026-10-06, from the `/review-plan` findings G2 and G4, with the owner's approval. The three log items above were left for T15 by earlier tasks, and were not in this list.
+    2. The second Verify run makes a real booking. Do not use the manual trigger between 00:05 and 01:00 on a run day (spec section 9, exception 1).
 
 ## Phase 5 — Infrastructure and deployment
 
@@ -337,7 +344,7 @@ Goal: the Function runs in Azure on the correct schedule, deployed by CI.
 
 - [ ] **T17 — Add the GitHub Actions workflow**
   - Refs: spec 4.1 defect 8, spec 9, plan 6, plan 8.1, plan 8.4
-  - Depends on: T16
+  - Depends on: T14, T15, T16
   - Done when:
     - One workflow builds and tests on push to `main` and on pull request, on `windows-latest` with .NET `10.0.x`.
     - It deploys only on `main`, and only when the tests pass.
@@ -345,16 +352,22 @@ Goal: the Function runs in Azure on the correct schedule, deployed by CI.
     - The client id, tenant id and subscription id are GitHub repository variables.
   - Verify: a pull request shows a green build and the deploy job is skipped; a push to `main` deploys; SCM basic authentication is still off
   - Notes:
+    1. The first push to `main` after this workflow is merged deploys the Function, and the timer is live from then. It makes real bookings at 00:05 on every run day. So this task waits for T14, which proves one booking from the code, and T15, which makes the runs visible in the logs.
+    2. Do not merge or push to `main` between 00:05 and 01:00 on a run day, because a deployment restarts the host (spec section 9, exception 2).
+    3. Changed on 2026-10-06, from the `/review-plan` finding G1, with the owner's approval. Before, T17 depended only on T16, so it could deploy before T14 and T15.
 
 - [ ] **T18 — Deploy and check the schedule**
-  - Refs: spec 6.1, spec 6.2, plan 3, plan 3.3, plan 8.1
+  - Refs: spec 6.1, spec 6.2, plan 3, plan 3.3, plan 5.2, plan 8.1
   - Depends on: T9a, T15, T17
   - Done when:
     - The Function is deployed from `main`.
-    - The logs show the next scheduled run at 00:05 London time, not 00:05 UTC. This is the check for the trigger time in spec section 6.2.
+    - The trigger time in spec section 6.2 is checked, as plan section 8.1 describes:
+      - Before 25 October 2026: the first scheduled run's UTC timestamp is 23:05 on the day before the run day.
+      - From 25 October 2026: London time equals UTC, so the logs cannot show the difference. Instead, `WEBSITE_TIME_ZONE` is `GMT Standard Time` in the Function App's environment variables.
     - The first scheduled run after deployment logs `IsPastDue`, and, if it is late, whether the late-run window allowed it.
-  - Verify: Function App → Log stream after deployment
+  - Verify: Application Insights → Logs (KQL) after the first scheduled run. Log stream in the portal is not available, because the host uses OpenTelemetry (plan section 5.2).
   - Notes:
+    1. Changed on 2026-10-06, from the `/review-plan` finding G3, with the owner's approval. Before, the check used Log stream, and it could not catch a missing time zone setting after BST ends.
 
 ## Phase 6 — Verify in the season
 
