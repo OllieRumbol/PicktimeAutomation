@@ -27,8 +27,6 @@ No secret or personal detail stays in source. Local development uses `local.sett
 | `Picktime:ScanToken` | *(secret)* | The `scantoken` header value |
 | `Picktime:AccountId` | `4fcc15b7-…` | |
 | `Picktime:LocationId` | `dd0a2b7e-…` | |
-| `Picktime:BrowserId` | *(to confirm)* | Only if spec section 5.4 shows it is required |
-| `Picktime:Referer` | `https://www.picktime.com/thwac` | Only if required |
 | `Archer:FirstName` | `Oliver` | |
 | `Archer:LastName` | `Bourne` | |
 | `Archer:Email` | *(personal)* | |
@@ -74,7 +72,7 @@ There is deliberately no time zone setting. The club is in London, so `Europe/Lo
 
 The `:` separator works on Windows, which this project uses (section 8.1). A further target is added as `Booking:Targets:2:Name` and `Booking:Targets:2:ResourceId`, which is still a configuration change, as spec section 3, goal 4 requires. A single text value such as `"17,18,19"` was rejected: it needs custom parsing, and it cannot hold the name and id pairs.
 
-The API client sends the `scantoken` header, plus only the headers that spec section 5.4 records as required. That set is unknown until spec section 7.1 is resolved, and it is resolved before the first real booking.
+The API client sends only the `scantoken` header, on both calls. The booking body is sent as `application/json; charset=utf-8`, with no cache-buster on the URL. This is the minimum set that spec section 5.4 records, so no header setting is required. There is deliberately no `Picktime:BrowserId` or `Picktime:Referer` setting: spec section 5.4 shows neither is needed, and a setting that nothing reads is only one more thing to keep correct.
 
 There is deliberately no setting for `booking_addnl_fields`. It is a constant, because it never varies (spec section 8, assumption 3).
 

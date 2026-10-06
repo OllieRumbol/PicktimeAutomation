@@ -251,11 +251,20 @@ Requirements that follow:
 
 ### 5.4 Headers
 
-A booking has been created successfully from Postman, outside any browser session, using a six-month-old token. So no browser, no live session and no fresh token is required. That removes the main risk.
+A booking has been created successfully from Postman, outside any browser session, using a six-month-old token. So no browser, no live session and no fresh token is required.
 
-One detail is still open. The captured availability request sends `browserid`, `x-requested-with: XMLHttpRequest`, a `referer`, and cookies including `pt_csrf` and `pt_slot_hold_check`, whose value equals the `browserid`. The successful Postman booking was sent with 25 headers, so it is not yet known which of those the API actually requires.
+The site's own requests send `browserid`, `x-requested-with: XMLHttpRequest`, a `referer`, and cookies including `pt_csrf` and `pt_slot_hold_check`, whose value equals the `browserid`. None of these is required.
 
-This is a verification task rather than a blocker. See section 7.
+**The minimum set is `scantoken` plus `content-type: application/json; charset=utf-8`.** Proven on 2026-10-06 by two real bookings from Postman, made as section 7.1 describes. Each returned HTTP 200 with `status: true` and `message: "Appointment fixed"`:
+
+1. `scantoken` and `content-type`, plus Postman's default headers. No cache-buster on the URL. The booking took 6.69 seconds.
+2. The same request with Postman's `User-Agent`, `Accept`, `Accept-Encoding` and `Connection` removed. The booking took 6.28 seconds.
+
+In both, no cookies were sent: the Postman cookie jar was empty, and the response set no cookies. No `browserid`, `x-requested-with`, `referer`, `accept` or `user-agent` was needed.
+
+One caveat. Postman always sends `Cache-Control: no-cache` and a `Postman-Token`, and neither can be removed. So the bookings above do not prove that a request without them succeeds. The first real booking from the code, which sends neither, confirms it.
+
+The availability read does not need `scantoken`, cookies or `browserid` (section 5.3). Every captured read also sent `x-requested-with`, `referer` and `accept`, so a read without them has not been seen. The first real run from the code, which sends only `scantoken` on the read too, confirms it.
 
 ---
 
@@ -427,17 +436,15 @@ It uses the same code path as the timer, so manual and scheduled runs cannot beh
 
 ## 7. Remaining unknowns
 
-Both endpoints are now captured and a booking has been proven end to end, so nothing blocks implementation. One small thing is still to be pinned down, cheaply, before the first real booking.
+Both endpoints are captured and a booking has been proven end to end. Both unknowns below are resolved, so no item is open.
 
 ### 7.1 The minimum header set
 
-The successful Postman booking carried 25 headers. It is not known which are required. Find out by removing headers from that same Postman request and re-sending against a free slot, in this order:
+Resolved on 2026-10-06. The answer is recorded in section 5.4.
 
-1. Remove all cookies. Re-send.
-2. Remove `browserid`. Re-send.
-3. Remove `x-requested-with` and `referer`. Re-send.
+The successful Postman booking carried 25 headers. The goal is to send as little as possible, because every extra header is one more thing that can change under us.
 
-Stop at the first step that fails, and keep whatever the last successful attempt sent. The goal is to send as little as possible, because every extra header is one more thing that can change under us. Record the answer in section 5.4.
+The headers were added back from the fewest, not removed from the full 25. A failed attempt books nothing, so only a success makes a booking, and each booking must be cancelled by hand. Starting from the fewest, the first success is the answer, so the test makes as few bookings as possible. The first attempt sent only what the code sends, and it succeeded, so no further attempt was needed. A second booking checked the same request with Postman's optional headers removed.
 
 ### 7.2 What a rejection looks like
 

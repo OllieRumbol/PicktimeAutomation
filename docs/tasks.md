@@ -244,7 +244,7 @@ Goal: the booking rules in spec section 6 are implemented, covered by their test
 
 Goal: one real booking made from a local run, with the duplicate-booking protection already in place.
 
-- [ ] **T12 — Find the minimum header set (manual)**
+- [x] **T12 — Find the minimum header set (manual)**
   - Refs: spec 5.4, spec 7.1, plan 2
   - Depends on: T6
   - Done when:
@@ -255,6 +255,15 @@ Goal: one real booking made from a local run, with the duplicate-booking protect
   - Notes: Do the Postman part early, before T5 and T6 if possible, so the API client is written against the real header set. The code change needs T6. Evidence from the T13 captures on 2026-10-06, where every request sent only `scantoken`, `x-requested-with`, `referer` and `accept`, with no cookies and no `browserid`:
     1. The availability read works with no cookies and no `browserid`. It also works with no `scantoken`, because the read does not check the token (spec section 5.3).
     2. A booking reached the overlap check with no cookies and no `browserid`. It was rejected because the slot was taken, so this does not prove that a booking succeeds without them. T12 must still prove a successful booking.
+
+    Result, 2026-10-06. The owner made two real bookings in Postman on a free hour on 2b, and cancelled both by hand. No request was sent from the code. Points to record:
+    1. The minimum set is `scantoken` plus `content-type: application/json; charset=utf-8`. Both bookings returned HTTP 200 with `status: true` and `message: "Appointment fixed"`, in 6.69 and 6.28 seconds. Recorded in spec section 5.4.
+    2. The steps in spec section 7.1 were changed with the owner's approval: the headers were added back from the fewest, not removed from the full 25, because only a success makes a booking. The first attempt sent only what the code sends, and it succeeded. Spec section 7.1 is resolved, and spec section 7 has no open items.
+    3. The code already matched: the booking client sends only `scantoken`, the body is `application/json; charset=utf-8`, and the save URL has no cache-buster. No production code changed.
+    4. Plan section 2 now says no header setting is required, and the `Picktime:BrowserId` and `Picktime:Referer` rows are removed (T3 note 2).
+    5. A new test in `PicktimeApiRegistrationTests` checks that a booking sends no header other than `scantoken`, with that content type. A check by mutation: adding `x-requested-with` to the client fails it.
+    6. Left for T14: Postman always sends `Cache-Control` and `Postman-Token`, so a booking without them is not yet proven. Every captured read also sent `x-requested-with`, `referer` and `accept`, so a read with only `scantoken` is not yet proven either. T14 books from the real code, which sends none of these headers, so it confirms both. Spec section 5.4 records both caveats.
+    7. The booking took about 6.3 to 6.7 seconds, against the 20-second timeout in plan section 4.1, which was set from a measured 3.64 seconds. Plan section 4.1 is not changed in this task.
 
 - [x] **T13 — Capture rejected requests (manual)**
   - Refs: spec 5.2, spec 5.3, spec 7.2, plan 4.2, tests 24, 32
@@ -413,3 +422,4 @@ Goal: the automation is proved in production and left running.
 * 2026-10-05 — T10 — Retry the availability read only — branch `task/t10-retry-availability-read`
 * 2026-10-05 — T11 — Handle an unknown booking result — branch `task/t11-unknown-booking-result`
 * 2026-10-06 — T13 — Capture rejected requests — branch `task/t13-capture-rejections`
+* 2026-10-06 — T12 — Find the minimum header set — branch `task/t12-minimum-headers`

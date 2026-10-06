@@ -52,6 +52,23 @@ public sealed class PicktimeApiRegistrationTests
         }
     }
 
+    // Spec section 5.4: a booking succeeds with scantoken and this content type only.
+    // Every extra header is one more thing that can change under us, so none is added without a reason.
+    [TestMethod]
+    public async Task CreateBookingAsync_SendsOnlyTheScanTokenHeaderAndJsonContentType()
+    {
+        var handler = StubHttpMessageHandler.Returning(HttpStatusCode.OK, BookingResponse);
+        using var provider = BuildProvider(handler);
+        var api = provider.GetRequiredService<IPicktimeApiService>();
+
+        await api.CreateBookingAsync(Request, CancellationToken.None);
+
+        var request = handler.Requests.Single();
+        var headerNames = request.Headers.Select(header => header.Key).ToList();
+        CollectionAssert.AreEqual(new[] { "scantoken" }, headerNames);
+        Assert.AreEqual("application/json; charset=utf-8", request.Content?.Headers.ContentType?.ToString());
+    }
+
     // The token rejection captured on 2026-10-06, from a booking sent with an invalid scantoken (spec section 5.3).
     private const string TokenRejectedResponse = """{"status": false, "message": "Auth token validation error", "version": "1.0.0"}""";
 
