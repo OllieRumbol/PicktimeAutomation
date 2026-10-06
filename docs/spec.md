@@ -49,6 +49,8 @@ The club uses Picktime for indoor target booking. Bookings open exactly 7 days i
 
 ## 4. Current state of the code
 
+This section records the code as it was when this specification was written, in September 2026. It is the starting point, and it is not updated as the defects are fixed.
+
 The repository contains a working skeleton. It compiles and has the right shape. The Picktime API is proven to accept a booking, but this code has never made one, because of defect 1 below.
 
 | Project | Purpose | State |
@@ -251,11 +253,20 @@ Requirements that follow:
 
 ### 5.4 Headers
 
-A booking has been created successfully from Postman, outside any browser session, using a six-month-old token. So no browser, no live session and no fresh token is required. That removes the main risk.
+A booking has been created successfully from Postman, outside any browser session, using a six-month-old token. So no browser, no live session and no fresh token is required.
 
-One detail is still open. The captured availability request sends `browserid`, `x-requested-with: XMLHttpRequest`, a `referer`, and cookies including `pt_csrf` and `pt_slot_hold_check`, whose value equals the `browserid`. The successful Postman booking was sent with 25 headers, so it is not yet known which of those the API actually requires.
+The site's own requests send `browserid`, `x-requested-with: XMLHttpRequest`, a `referer`, and cookies including `pt_csrf` and `pt_slot_hold_check`, whose value equals the `browserid`. None of these is required.
 
-This is a verification task rather than a blocker. See section 7.
+**The minimum set is `scantoken` plus `content-type: application/json; charset=utf-8`.** Proven on 2026-10-06 by two real bookings from Postman, made as section 7.1 describes. Each returned HTTP 200 with `status: true` and `message: "Appointment fixed"`:
+
+1. `scantoken` and `content-type`, plus Postman's default headers. No cache-buster on the URL. The booking took 6.69 seconds.
+2. The same request with Postman's `User-Agent`, `Accept`, `Accept-Encoding` and `Connection` removed. The booking took 6.28 seconds.
+
+In both, no cookies were sent: the Postman cookie jar was empty, and the response set no cookies. No `browserid`, `x-requested-with`, `referer`, `accept` or `user-agent` was needed.
+
+One caveat. Postman always sends `Cache-Control: no-cache` and a `Postman-Token`, and neither can be removed. So the bookings above do not prove that a request without them succeeds. The first real booking from the code, which sends neither, confirms it.
+
+The availability read does not need `scantoken`, cookies or `browserid` (section 5.3). Every captured read also sent `x-requested-with`, `referer` and `accept`, so a read without them has not been seen. The first real run from the code, which sends only `scantoken` on the read too, confirms it.
 
 ---
 
@@ -403,7 +414,7 @@ A run outside the season is reported as skipped, and appears in the run record l
 
 No separate state store is needed. A slot already booked, whether by this automation or by hand, is absent from the availability response. The availability read is therefore the guard against double booking on one target.
 
-It does not stop a second run for the same booking date from booking the fallback target for an hour already held on the preferred target. So two runs for the same booking date must not both book. Section 9 records the two cases where this is accepted, and the rules that keep them rare.
+It does not stop a second run for the same booking date from booking the fallback target for an hour already held on the preferred target. So two runs for the same booking date must not both book. Section 9 records the three cases where this is accepted, and the rules that keep them rare. A booking made by hand for the same booking date, before the run reads availability, has the same effect. Section 9 rules it out.
 
 ### 6.7 Manual trigger
 
@@ -427,17 +438,15 @@ It uses the same code path as the timer, so manual and scheduled runs cannot beh
 
 ## 7. Remaining unknowns
 
-Both endpoints are now captured and a booking has been proven end to end, so nothing blocks implementation. One small thing is still to be pinned down, cheaply, before the first real booking.
+Both endpoints are captured and a booking has been proven end to end. Both unknowns below are resolved, so no item is open.
 
 ### 7.1 The minimum header set
 
-The successful Postman booking carried 25 headers. It is not known which are required. Find out by removing headers from that same Postman request and re-sending against a free slot, in this order:
+Resolved on 2026-10-06. The answer is recorded in section 5.4.
 
-1. Remove all cookies. Re-send.
-2. Remove `browserid`. Re-send.
-3. Remove `x-requested-with` and `referer`. Re-send.
+The successful Postman booking carried 25 headers. The goal is to send as little as possible, because every extra header is one more thing that can change under us.
 
-Stop at the first step that fails, and keep whatever the last successful attempt sent. The goal is to send as little as possible, because every extra header is one more thing that can change under us. Record the answer in section 5.4.
+The headers were added back from the fewest, not removed from the full 25. A failed attempt books nothing, so only a success makes a booking, and each booking must be cancelled by hand. Starting from the fewest, the first success is the answer, so the test makes as few bookings as possible. The first attempt sent only what the code sends, and it succeeded, so no further attempt was needed. A second booking checked the same request with Postman's optional headers removed.
 
 ### 7.2 What a rejection looks like
 
@@ -473,6 +482,8 @@ One observation on timing: bookings are made by hand until the automation is dep
   1. A manual run for the same booking date as a scheduled run. The manual trigger is not used between 00:05 and 01:00 on a run day, because a late scheduled run can start at any time in that window (section 6.1). It is not used for a booking date that a run has already booked.
   2. A scheduled run that is run again after the host stops in the middle of it, and restarts before 01:00 (section 6.1). The second run can book the fallback target for hours the first run booked. No deployment is made between 00:05 and 01:00 on a run day.
   3. A late run for a run day missed in an outage of more than one day, when the host starts a few seconds before the run time on a later run day. The late run starts just after the run time, so it books (section 6.1), and that day's own run then books the same booking date again. The second run can book the fallback target for hours the first run booked.
+
+  A booking made by hand is not an exception. If one is made for the booking date before the run reads availability, the run sees that slot as taken and books the fallback target for the same hour. Slots are released at London midnight, and a late run can start as late as 01:00 (section 6.1). So no booking is made by hand between 00:00 and 01:00 on a run day.
 * All tests pass.
 * Deployment is automated, and a failing test stops a deployment.
 * One real booking has been confirmed on the Picktime site from a run in Azure, and its confirmation email arrived.

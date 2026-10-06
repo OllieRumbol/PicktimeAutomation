@@ -27,8 +27,6 @@ No secret or personal detail stays in source. Local development uses `local.sett
 | `Picktime:ScanToken` | *(secret)* | The `scantoken` header value |
 | `Picktime:AccountId` | `4fcc15b7-…` | |
 | `Picktime:LocationId` | `dd0a2b7e-…` | |
-| `Picktime:BrowserId` | *(to confirm)* | Only if spec section 5.4 shows it is required |
-| `Picktime:Referer` | `https://www.picktime.com/thwac` | Only if required |
 | `Archer:FirstName` | `Oliver` | |
 | `Archer:LastName` | `Bourne` | |
 | `Archer:Email` | *(personal)* | |
@@ -74,7 +72,7 @@ There is deliberately no time zone setting. The club is in London, so `Europe/Lo
 
 The `:` separator works on Windows, which this project uses (section 8.1). A further target is added as `Booking:Targets:2:Name` and `Booking:Targets:2:ResourceId`, which is still a configuration change, as spec section 3, goal 4 requires. A single text value such as `"17,18,19"` was rejected: it needs custom parsing, and it cannot hold the name and id pairs.
 
-The API client sends the `scantoken` header, plus only the headers that spec section 5.4 records as required. That set is unknown until spec section 7.1 is resolved, and it is resolved before the first real booking.
+The API client sends only the `scantoken` header, on both calls. The booking body is sent as `application/json; charset=utf-8`, with no cache-buster on the URL. This is the minimum set that spec section 5.4 records, so no header setting is required. There is deliberately no `Picktime:BrowserId` or `Picktime:Referer` setting: spec section 5.4 shows neither is needed, and a setting that nothing reads is only one more thing to keep correct.
 
 There is deliberately no setting for `booking_addnl_fields`. It is a constant, because it never varies (spec section 8, assumption 3).
 
@@ -82,7 +80,7 @@ There is deliberately no setting for `booking_addnl_fields`. It is a constant, b
 
 * `BookingSchedule` is the single source of truth for when the automation runs. There is deliberately no separate `RunDays` setting, because a second value describing the same schedule would be a second place to change and a second place to get wrong.
 * The name is flat, with no `Booking:` prefix, because the Functions host reads it directly. It is not bound to the options classes.
-* Without a check, a missing `BookingSchedule` would only put the timer function in an error state, while the HTTP trigger kept running, which is easy to miss. So the start-up validation in `AddPicktimeServices` also checks that `BookingSchedule` is set, and stops start-up if it is not. It also parses the expression, because the late-run window in section 3 reads it, so an expression that does not parse stops start-up. It requires the six-field form, with seconds. The host also accepts five fields, but this setting has always had six, and one accepted form keeps the window's parse and the host's parse the same. A valid expression with the wrong time or days is caught by the check in section 8.1 that the next scheduled run is 00:05 London time.
+* Without a check, a missing `BookingSchedule` would only put the timer function in an error state, while the HTTP trigger kept running, which is easy to miss. So the start-up validation in `AddPicktimeServices` also checks that `BookingSchedule` is set, and stops start-up if it is not. It also parses the expression, because the late-run window in section 3 reads it, so an expression that does not parse stops start-up. It requires the six-field form, with seconds. The host also accepts five fields, but this setting has always had six, and one accepted form keeps the window's parse and the host's parse the same. A valid expression with the wrong time or days is caught by the trigger time check after deployment, in section 8.1.
 
 ---
 
@@ -131,7 +129,7 @@ When no date is supplied, the service computes it from the injected `TimeProvide
 
 That placement is deliberate. If the trigger computed the date, the date rule — the thing most likely to be wrong, per spec section 6.2 — would live in an Azure Functions entry point, which is awkward to unit test. Keeping it inside the service means both triggers are thin adapters with no logic of their own, and the rule is covered by ordinary unit tests.
 
-**Service registration** lives in one extension method, `AddPicktimeServices(IServiceCollection)`, in the `PicktimeAutomation.Services` project, which `Program.cs` calls. `LondonClock` is in the same project, so `PicktimeAutomation.ServicesTests` can test both. This includes the options, the services and both HTTP clients with their retry policies. Tests build the real registrations from the same method, so test 33 checks the configuration that actually runs (section 7.2, rule 7).
+**Service registration** lives in one extension method, `AddPicktimeServices(IServiceCollection, IConfiguration)`, in the `PicktimeAutomation.Services` project, which `Program.cs` calls. `LondonClock` is in the same project, so `PicktimeAutomation.ServicesTests` can test both. This includes the options, the services and both HTTP clients with their retry policies. Tests build the real registrations from the same method, so test 33 checks the configuration that actually runs (section 7.2, rule 7).
 
 **Host setup and HTTP model.** `Program.cs` uses `FunctionsApplication.CreateBuilder(args)` with `ConfigureFunctionsWebApplication()`, which is ASP.NET Core integration, with the package `Microsoft.Azure.Functions.Worker.Extensions.Http.AspNetCore`. It replaces the current `new HostBuilder()` with `ConfigureFunctionsWorkerDefaults()`, for two reasons:
 
@@ -303,8 +301,8 @@ That turns an unsafe retry into a safe one, using the availability endpoint we a
 | Timeout | Value | Reason |
 | --- | --- | --- |
 | Booking `POST` | 20 seconds | About 5 times the measured 3.64 seconds, so a slow booking that succeeds is not wrongly marked `Unknown`. Short enough that a hung request does not stall the run. `HttpClient`'s default of 100 seconds is not used. |
-| Availability `GET` | The standard resilience handler defaults: 10 seconds per attempt, 30 seconds in total | Reads are quick and safe to repeat. The defaults suit them, so nothing is configured. |
-| Whole run | `functionTimeout` of 10 minutes in `host.json` | The Consumption plan defaults to 5 minutes, with a maximum of 10 (checked on 2026-09-30). Worst case, with every call timing out, is 30 seconds of reads, plus, for each of 3 hours, two attempts and one re-read (70 seconds): about 4 minutes. 10 minutes leaves room for a cold start. |
+| Availability `GET` | The standard resilience handler defaults: 10 seconds per attempt, 30 seconds in total. Also a 35-second `Timeout` on the read client. | Reads are quick and safe to repeat, and the handler defaults suit them. The handler returns when the response headers arrive, so it does not limit the body download. The handler also sets the client's own `Timeout` to infinite, so without this setting a stalled body can hold a read until the function timeout. The setting is applied after the handler is added, so the handler does not overwrite it. The client timeout counts from the start of the request, retries included. At 35 seconds, just above the handler's 30, the handler still stops a normal timeout first, and the client timeout stops only a stalled body. Decided by the owner on 2026-10-06. |
+| Whole run | `functionTimeout` of 10 minutes in `host.json` | The Consumption plan defaults to 5 minutes, with a maximum of 10 (checked on 2026-09-30). Worst case, with every call timing out, is 35 seconds of reads, which run concurrently, plus, for each of 3 hours, two attempts and one re-read (75 seconds): about 4.5 minutes. 10 minutes leaves room for a cold start. |
 
 An HTTP-triggered function must respond within 230 seconds, whatever `functionTimeout` says. In the worst case above, a manual run loses its HTTP response, but the run itself continues to the end and logs as normal.
 
@@ -331,9 +329,9 @@ The first two rows match the rejections captured on 2026-10-06. A rejected token
 
 Spec section 9 records the three exceptions, and the rules for when the manual trigger is used and when deployments are made.
 
-**Raw response bodies in logs** may contain the archer's name or email. This is accepted, because both are already public by the owner's choice (section 6).
+**Raw response bodies in logs** may contain the archer's name or email. This is accepted, as recorded in section 6.
 
-Retries on the `GET` use the standard `Microsoft.Extensions.Http.Resilience` handler. Because the policy differs per endpoint, either register two named clients, or register the handler only for the availability path. Whichever is chosen, it must be impossible to accidentally pick up an automatic retry on the booking POST. Two named clients are registered: a read client with the handler, and a booking client with none and the 20-second timeout. The handler is added to the read client only, never through `ConfigureHttpClientDefaults`, which would add it to both. The handler is also set never to retry a `POST`, so a booking sent through the read client by mistake is still sent once. Test 33 fails if the two are swapped.
+Retries on the `GET` use the standard `Microsoft.Extensions.Http.Resilience` handler. Because the policy differs per endpoint, either register two named clients, or register the handler only for the availability path. Whichever is chosen, it must be impossible to accidentally pick up an automatic retry on the booking POST. Two named clients are registered: a read client with the handler and the 35-second timeout, and a booking client with no handler and the 20-second timeout. The handler is added to the read client only, never through `ConfigureHttpClientDefaults`, which would add it to both. The handler is also set never to retry a `POST`, so a booking sent through the read client by mistake is still sent once. Test 33 fails if the two are swapped.
 
 ---
 
@@ -361,31 +359,34 @@ Application Insights stays within its free allowance. See section 8.3.
 | --- | --- |
 | Packages | `Microsoft.Azure.Functions.Worker.OpenTelemetry` and `Azure.Monitor.OpenTelemetry.Exporter` |
 | `Program.cs` | `AddOpenTelemetry().UseFunctionsWorkerDefaults().UseAzureMonitorExporter()`. Register the exporter only when `APPLICATIONINSIGHTS_CONNECTION_STRING` is set, so local runs work without Azure. |
-| `host.json` | `"telemetryMode": "OpenTelemetry"`. Also set `samplingSettings.isEnabled` to `false`, which fixes defect 9 in spec section 4.1 for the host's own logs. `functionTimeout` is set here too (section 4.1). |
+| `host.json` | `"telemetryMode": "OpenTelemetry"`. In this mode the `logging.applicationInsights` section, including `samplingSettings`, does not apply (Microsoft Learn, "Use OpenTelemetry with Azure Functions", checked on 2026-10-06). So that setting no longer fixes defect 9 in spec section 4.1. Still set `samplingSettings.isEnabled` to `false`, so sampling stays off if the mode is ever removed. `functionTimeout` is set here too (section 4.1). |
 | `appsettings.json` | Worker log levels: `Default` at `Information`, `Microsoft` at `Warning`. Worker log levels are set here, not in `host.json`. |
 
-No sampling is configured in the worker. Sampling is designed for high volume, and at three runs a week there is nothing to gain from it. Whether the exporter samples by default was not confirmed, so the first run in Azure is checked: the section 5.4 query must return it with every column filled.
+Defect 9 is fixed because no sampling is configured, in the host or in the worker. Sampling is designed for high volume, and at three runs a week there is nothing to gain from it. Whether the exporter samples by default was not confirmed, so the first run in Azure is checked: the section 5.4 query must return it with every column filled.
 
 The libraries are free and open source. The logs go to the same Application Insights resource, within the same free allowance (section 8.3), so this choice adds no cost.
 
-Three ways to reach the logs, in increasing order of effort:
+Two ways to reach the logs, in increasing order of effort:
 
 | Route | Where | Use it for |
 | --- | --- | --- |
 | **Invocations** | Function App → Functions → the function → Invocations | The normal check. A row per run, click through for that run's log lines. |
-| **Log stream** | Function App → Log stream | Watching a manual run live. Nothing is retained. |
 | **Logs (KQL)** | Application Insights → Logs | History, and the pinned dashboard query below. |
+
+Log stream in the portal is not available. When the host uses OpenTelemetry, the Azure portal does not support log streaming (Microsoft Learn, "Use OpenTelemetry with Azure Functions", checked on 2026-10-06). A manual run returns its summary in the HTTP response, and its log lines are in Logs (KQL) after it finishes.
 
 After the first run in Azure, confirm that the Invocations view shows data with OpenTelemetry enabled. If it does not, Logs (KQL) becomes the normal check.
 
 ### 5.3 What each run logs
 
-1. **Start** — the times and booking date required by spec section 6.2, and the season gate result required by spec section 6.3.
+1. **Start** — the times and booking date required by spec section 6.2, and the season gate result required by spec section 6.3. A `Missed` run never reaches the booking service, so the timer trigger logs the same times and booking date itself. The timer trigger also logs the schedule's last and next times with their UTC offset, so the log shows whether they are London time or UTC.
 2. **Availability** — the free hours found for each target.
-3. **Each attempt** — hour, target name, outcome, the booking id on success, and `booking_email_confirmation`.
-4. **Summary** — one event, described below. It is written for every run, whatever the outcome: by the booking service for a normal or skipped run, by the timer trigger for a `Missed` run, and by the exception middleware for an `Error` run (section 3). So no run is silent, as spec section 5.3 requires.
+3. **Each attempt** — hour, target name, outcome, the booking id on success, and `booking_email_confirmation`. An hour that throws unexpectedly (section 4.2) logs the exception itself, not only its message, because the summary does not hold it.
+4. **Summary** — one event, described below. It is written once for every run, whatever the outcome: by the trigger that started the run, after the booking service returns, for a normal or skipped run; by the timer trigger for a `Missed` run; and by the exception middleware for an `Error` run (section 3). So every run appears in the run record, as spec section 6.5 requires.
 
-Use structured logging with named placeholders throughout, so values land in `customDimensions` and are queryable. Keep `BookingLoggingExtensions` as the single place summaries are written. The timer trigger and the exception middleware call it too.
+Use structured logging with named placeholders throughout, so values land in `customDimensions` and are queryable. Keep `BookingLoggingExtensions` as the single place summaries are written. Both triggers and the exception middleware call it.
+
+**Why the triggers write the summary, not the booking service.** The booking service returns the `BookingSummary`, and the HTTP trigger also returns it as JSON. `BookingLoggingExtensions` is in the Functions project, which the services project does not reference. The `Missed` and `Error` summaries must be written in the Functions project anyway, because the booking service never runs for them. So every summary is written in one layer. Moving the normal and skipped summaries into the booking service was rejected on 2026-10-06: it splits the writers across two projects, and a trigger call left in place during the move would count every run twice. Test 37 checks that each run writes exactly one summary.
 
 **The summary is one event with named properties**, not a sentence of interpolated text. That is what makes the dashboard query below possible:
 
@@ -444,6 +445,7 @@ Adding a push or email alert later is a small change. An Azure Monitor alert on 
 | `scantoken` going forward | Move to configuration, and to a Function App application setting in Azure. Not in source. |
 | Email address | Move to configuration. The repository is public, so it should not be a literal in source. |
 | Name and email in git history | Accepted on 2026-09-30, by the owner's choice. The archer's name and email were literals in committed code, so they stay in git history after they move to configuration. The name also appears as example values in section 2. Rewriting history was rejected: it is destructive, and GitHub keeps the old commits in merged pull requests anyway. |
+| Name and email in logs | Accepted on 2026-10-06, by the owner's choice, as an exception to the owner's C# standard, which says not to log personal data. A malformed response body is logged at Warning level, cut to its first 1 KB (section 4.2), and a booking response can hold the archer's name and email. The raw text is what makes a malformed body possible to diagnose. The data is the owner's own, it is already public in git history (row above), and the logs stay in the owner's private Application Insights resource for up to 90 days (section 8.3). Only these two fields are accepted. The `scantoken` is never logged. |
 | `.gitignore` | Remove the self-ignoring line, then commit both ignore files. This matters because the token will live in `local.settings.json`. |
 | `local.settings.json` | Stays ignored. Never committed. |
 | Deployment credentials | GitHub Actions signs in to Azure with OpenID Connect (section 8.4). No deployment secret is stored in GitHub, and SCM basic authentication stays off on the Function App. A publish profile was rejected: Microsoft marks it "not recommended", and it needs basic authentication switched on, which Microsoft says makes the app less secure (checked on 2026-09-30). |
@@ -544,7 +546,7 @@ Not tested: that the token is never written to a log. Asserting the absence of a
 
 ### 7.7 Function triggers — `PicktimeAutomation.AzureFunctionsTests`
 
-Four tests, deliberately. Both triggers are thin adapters. The only logic is the HTTP trigger's input check, the timer's late-run check and the exception middleware, so there is nothing else here worth asserting.
+Five tests, deliberately. Both triggers are thin adapters. The only logic is the HTTP trigger's input check, the timer's late-run check, the exception middleware and the summary each trigger writes (section 5.3), so there is nothing else here worth asserting.
 
 | # | Test | Defect it catches |
 | --- | --- | --- |
@@ -552,6 +554,7 @@ Four tests, deliberately. Both triggers are thin adapters. The only logic is the
 | 28 | The HTTP trigger passes a supplied date through unchanged, and returns the run summary as JSON | The manual trigger behaving differently from the scheduled one |
 | 29 | A malformed or past `bookingDate` returns 400, and the booking service is not called. Today is accepted, including at 00:30 London in BST, when the UTC date is still the day before. | A typo in a manual run books the wrong day, or crashes, or a valid same-day run is rejected near midnight |
 | 34 | A timer run with `IsPastDue` set, outside the late-run window, does not call the booking service, logs a warning, and writes the summary event with the `Missed` verdict. Inside the window, it calls the booking service with no date. | A late run books a day that was never scheduled, a missed night leaves no record, or a run delayed by start-up books nothing |
+| 37 | A normal run and a skipped run, through each trigger, write exactly one summary event. It has every property that the section 5.4 query reads: `BookingDate`, `BookedCount`, `NoAvailabilityCount`, `FailedCount`, `UnconfirmedCount`, `FailedReadCount` and `Verdict`. | A second summary writer added by mistake, so the dashboard counts every run twice, or a missing property that leaves a dashboard column empty |
 
 ### 7.8 Configuration — `PicktimeAutomation.ServicesTests`
 
@@ -571,7 +574,7 @@ Four tests, deliberately. Both triggers are thin adapters. The only logic is the
 | Plan | Consumption (serverless) | Within the free grant |
 | Storage account | Standard LRS | Required by the timer trigger |
 | Application Insights | Workspace-based | Holds no data itself. It sends everything to the Log Analytics workspace below. |
-| Log Analytics workspace | Pay-as-you-go (per GB), with a daily cap of 0.1 GB | Where logs are stored and charged. The first 5 GB a month per billing account is free, and Application Insights data is kept for 90 days at no charge (checked on 2026-09-30). Expected usage: a few MB a month. See section 8.3. |
+| Log Analytics workspace | Pay-as-you-go (per GB), with a daily cap of 0.1 GB | Where logs are stored and charged. The first 5 GB a month per billing account is free, and Application Insights data is kept for 90 days at no charge (checked on 2026-09-30, and again on 2026-10-06). Expected usage: a few MB a month. See section 8.3. |
 | Function App | .NET 10 isolated worker | |
 | Operating system | **Windows** | Required for .NET 10 on the Consumption plan, and chosen for the time zone setting. See below. |
 | Budget | £1 per month, on the resource group | Emails an alert when actual cost reaches £1. Budgets are free. See section 8.3. |
@@ -589,14 +592,17 @@ Plus every setting in section 2.
 
 **Why Windows.** There are two reasons, and either one is enough.
 
-1. **.NET 10 is not available on the Linux Consumption plan.** Microsoft's documentation states that .NET 9 is the last .NET version supported there, and that the Linux Consumption plan retires on 30 September 2028. Apps on the Windows Consumption plan are not affected. Checked on 2026-09-30.
+1. **.NET 10 is not available on the Linux Consumption plan.** Microsoft's documentation states that .NET 9 is the last .NET version supported there, and that the Linux Consumption plan retires on 30 September 2028. Apps on the Windows Consumption plan are not affected. Checked on 2026-09-30, and again on 2026-10-06: .NET 10 is generally available on Functions v4.
 2. **The time zone setting.** `WEBSITE_TIME_ZONE` takes a Windows time zone id on a Windows plan (`GMT Standard Time`) and an IANA id on a Linux plan (`Europe/London`). The setting is long-established and well documented on Windows, and less reliably behaved on Linux. A wrong trigger time is the worst failure this project can have, so the better-trodden path wins.
 
 **Flex Consumption**, Microsoft's recommended successor to the Linux Consumption plan, runs only on Linux. Reason 2 therefore applies to it too, so it is not used.
 
 Microsoft labels the Consumption plan "legacy" and recommends Flex Consumption for new apps. On Windows the Consumption plan is still generally available, with no retirement date (checked on 2026-09-30). Check this again before each season.
 
-The code is unaffected by this choice. See section 3.3. After deployment, confirm from the logs that the next scheduled run is 00:05 London time, not 00:05 UTC.
+The code is unaffected by this choice. See section 3.3. After deployment, check the trigger time:
+
+* **While BST is in force**, until the last Sunday of October (spec section 6.2): in Logs (KQL), the first scheduled run's UTC timestamp must be 23:05 on the day before the run day. A run at 00:05 UTC means the setting is missing.
+* **While GMT is in force:** London time equals UTC, so the logs cannot show the difference. Check instead that `WEBSITE_TIME_ZONE` is `GMT Standard Time` in the Function App's environment variables.
 
 ### 8.2 Local prerequisites
 
@@ -617,7 +623,7 @@ Checked on this machine:
 
 Do not install Azurite with `npm install -g azurite`. This machine's Node.js is v16.9.1, which current Azurite does not support. The bundled copy carries its own runtime, so it does not use the machine's Node.js. It is free, and nothing runs in Azure.
 
-Checked on 2026-10-01, in T2: Azurite started this way, and `func start` then listed the timer trigger.
+Checked on 2026-10-01: Azurite started this way, and `func start` then listed the timer trigger.
 
 **The timer is disabled for local runs.** `local.settings.json` sets `AzureWebJobs.TargetBookingFunction.Disabled` to `true`. Without it, `func start` can make real calls to Picktime: the timer keeps a record of its runs in Azurite, and when it sees a missed scheduled run it fires at once. The late-run check (section 3) does not prevent this. A missed run that fires between 00:05 and 01:00 on a run day is inside the late-run window, and books. So the `Disabled` setting is the only protection.
 
@@ -629,11 +635,11 @@ With the setting, `func start` reports "Function TargetBookingFunction is disabl
 
 Effectively free, but not literally zero.
 
-* **Functions free grant**, checked on 2026-09-30: 1 million executions and 400,000 GB-s of compute per month. It applies only to pay-as-you-go subscriptions, and it is shared by all function apps in the subscription.
+* **Functions free grant**, checked on 2026-09-30: 1 million executions and 400,000 GB-s of compute per month. It applies only to pay-as-you-go subscriptions, and it is shared by all function apps in the subscription. Microsoft Learn does not state these figures. It refers to the Azure Functions pricing page, so check them there again when the resources are created.
 * **Expected usage:** about 13 runs a month. Each run takes about 20 seconds, so at up to 0.25 GB of memory that is under 100 GB-s a month. It is negligible against the grant, even with other function apps in the same subscription.
-* Logs (Log Analytics workspace): the first 5 GB a month per billing account is free. About 78 runs per season, each writing a few dozen log lines, is negligible against it.
+* Logs (Log Analytics workspace): the first 5 GB a month per billing account is free (checked on 2026-10-06). About 78 runs per season, each writing a few dozen log lines, is negligible against it.
 * Daily cap: 0.1 GB a day on the workspace, which is free to set. Expected usage is hundreds of times smaller. It stops a logging bug from running up a cost before the £1 budget alert can report it. The trade-off: if the cap is ever reached, logs stop for the rest of that day, which can only happen during a runaway bug. Spec section 9 records this as the one accepted exception to "no log line from a run is ever discarded".
-* Log retention: Application Insights tables keep data for 90 days at no charge. Keep the default. Lowering it saves nothing, because the first 31 days are included in the ingestion price. Raising it adds a cost.
+* Log retention: Application Insights tables keep data for 90 days at no charge (checked on 2026-10-06). Keep the default. Lowering it saves nothing, because the first 31 days are included in the ingestion price. Raising it adds a cost.
 * Storage account: the only unavoidable charge. Azure Functions cannot run without a storage account, and the timer trigger keeps its schedule state there. Azure has no permanent free tier for storage. Estimated at well under £1 per month, from a tiny amount of stored data and the background transactions of the Functions host. This figure is an estimate, not checked against the storage pricing page.
 
 **Approved on 2026-09-30:** the storage account cost, up to £1 per month. The £1 budget in section 8.1 sends an alert if the real cost is ever higher, so the estimate is checked by Azure rather than trusted.
@@ -643,7 +649,7 @@ Effectively free, but not literally zero.
 A single GitHub Actions workflow in `.github/workflows/`. It runs on `windows-latest`, to match the Function App's operating system (section 8.1), and installs .NET `10.0.x` with `actions/setup-dotnet`.
 
 1. Trigger on push to `main`, and on pull request.
-2. Restore, build, and run all tests.
+2. Restore, build, and run all tests. NuGet Audit runs on restore, and its warnings for vulnerable packages (`NU1901` to `NU1904`) are errors in the workflow, as the owner's C# standard requires. So a package with a known vulnerability stops the build, and it never deploys.
 3. On `main` only, and only when tests pass, publish and deploy to the Function App.
 4. Sign in with `azure/login` using OpenID Connect, then deploy with `Azure/functions-action`. The workflow needs the `id-token: write` permission. This is Microsoft's recommended method (checked on 2026-09-30).
 5. The managed identity's client id, tenant id and subscription id are GitHub repository variables. They identify the identity; they are not secrets.

@@ -217,6 +217,21 @@ Goal: the booking rules in spec section 6 are implemented, covered by their test
     4. Test 33 is in `PicktimeApiRegistrationTests`. Its HTTP 401 case is the existing test 32 read test, which uses the same registration and asserts one request. Extra tests: a GET timeout in the handler, the caller's cancellation through the handler, a booking network error sent once, a POST through the read client sent once, and the booking client's 20-second timeout. The tests set the retry backoff to zero with `ConfigureAll<HttpStandardResilienceOptions>`, so they do not depend on the handler's internal options name.
     5. A check by mutation: with the two clients swapped in the registration, test 33 fails in both directions. Without `DisableForUnsafeHttpMethods`, the read-client POST test fails.
     6. `/code-review` found 8 points and no blocker. Points 2 to 6 and 8 are fixed: the read client never retries a POST (`DisableForUnsafeHttpMethods`), every handler rejection becomes `PicktimeReadException`, the comments say "up to 3 retries", and a booking network error is tested through the real registration. Point 7 (build the service with `ActivatorUtilities`) is not done: it matches the two `HttpClient` arguments by order alone, and the named arguments are clearer. Point 1 is open for the owner: the read client keeps `HttpClient`'s default 100-second timeout, which still applies while the response body downloads, after the handler has returned. A body that stalls can make one read take up to 100 seconds, not the 30 in plan section 4.1. Plan section 4.1 says nothing is configured for the GET, so a fix, such as a 30-second `Timeout` on the read client, is a plan change.
+    7. Point 1 was decided on 2026-10-06, from the `/review-plan` finding G5: the read client gets a 35-second timeout. Plan section 4.1 is updated, and T10a makes the change. T10a found that point 1 understated the problem: the handler sets the client timeout to infinite, not 100 seconds (T10a note 1).
+
+- [x] **T10a — Bound the read client's timeout**
+  - Refs: plan 4.1, plan 4.2, test 33
+  - Depends on: T10
+  - Done when:
+    - The read client has a 35-second `Timeout`, set in `AddPicktimeServices`, as plan section 4.1 requires. The booking client keeps its 20-second timeout.
+    - A test, built from the real `AddPicktimeServices` registration, checks the read client's 35-second timeout, like the existing test for the booking client's 20 seconds.
+    - Test 33 and the other read tests still pass, so the handler's retries and its 30-second limit are unchanged.
+  - Verify: the standard test command
+  - Notes: Added on 2026-10-06, from the `/review-plan` finding G5, with the owner's approval (T10 note 7). It is numbered T10a so that later task numbers do not change. Do it before T17, which deploys the Function. Done on 2026-10-06, in the same pull request as T12, by the owner's choice.
+    1. The problem was worse than T10 note 6 said. `AddStandardResilienceHandler` sets the client's `Timeout` to infinite, not the default 100 seconds. So before this task, a stalled body could hold a read until the 10-minute function timeout. The new test showed it: with the timeout set in the `AddHttpClient` callback, the read client's `Timeout` was infinite, because the handler's setting runs later. Plan section 4.1 is corrected.
+    2. The fix sets `ReadTimeout` (35 seconds) with `ConfigureHttpClient` after `AddStandardResilienceHandler`, so it runs last. The new test, `AddPicktimeServices_ReadClient_TimesOutAfter35Seconds`, failed before the fix and passes after it.
+    3. The read calls `GetAsync` with the default `ResponseContentRead`, so the whole body is read inside the client timeout. A client timeout throws `OperationCanceledException` while the caller's token is not cancelled, which `GetAvailableSlotsAsync` already turns into `PicktimeReadException`. No other code changed.
+    4. `/code-review` found one point and no blocker: T10 note 7 referred to this note before it existed. Fixed by this note.
 
 - [x] **T11 — Handle an unknown booking result**
   - Refs: spec 6.4, spec 6.5, spec 9, plan 4.1, plan 7.4, tests 12–14
@@ -244,7 +259,7 @@ Goal: the booking rules in spec section 6 are implemented, covered by their test
 
 Goal: one real booking made from a local run, with the duplicate-booking protection already in place.
 
-- [ ] **T12 — Find the minimum header set (manual)**
+- [x] **T12 — Find the minimum header set (manual)**
   - Refs: spec 5.4, spec 7.1, plan 2
   - Depends on: T6
   - Done when:
@@ -255,6 +270,15 @@ Goal: one real booking made from a local run, with the duplicate-booking protect
   - Notes: Do the Postman part early, before T5 and T6 if possible, so the API client is written against the real header set. The code change needs T6. Evidence from the T13 captures on 2026-10-06, where every request sent only `scantoken`, `x-requested-with`, `referer` and `accept`, with no cookies and no `browserid`:
     1. The availability read works with no cookies and no `browserid`. It also works with no `scantoken`, because the read does not check the token (spec section 5.3).
     2. A booking reached the overlap check with no cookies and no `browserid`. It was rejected because the slot was taken, so this does not prove that a booking succeeds without them. T12 must still prove a successful booking.
+
+    Result, 2026-10-06. The owner made two real bookings in Postman on a free hour on 2b, and cancelled both by hand. No request was sent from the code. Points to record:
+    1. The minimum set is `scantoken` plus `content-type: application/json; charset=utf-8`. Both bookings returned HTTP 200 with `status: true` and `message: "Appointment fixed"`, in 6.69 and 6.28 seconds. Recorded in spec section 5.4.
+    2. The steps in spec section 7.1 were changed with the owner's approval: the headers were added back from the fewest, not removed from the full 25, because only a success makes a booking. The first attempt sent only what the code sends, and it succeeded. Spec section 7.1 is resolved, and spec section 7 has no open items.
+    3. The code already matched: the booking client sends only `scantoken`, the body is `application/json; charset=utf-8`, and the save URL has no cache-buster. No production code changed.
+    4. Plan section 2 now says no header setting is required, and the `Picktime:BrowserId` and `Picktime:Referer` rows are removed (T3 note 2).
+    5. A new test in `PicktimeApiRegistrationTests` checks that a booking sends no header other than `scantoken`, with that content type. A check by mutation: adding `x-requested-with` to the client fails it.
+    6. Left for T14: Postman always sends `Cache-Control` and `Postman-Token`, so a booking without them is not yet proven. Every captured read also sent `x-requested-with`, `referer` and `accept`, so a read with only `scantoken` is not yet proven either. T14 books from the real code, which sends none of these headers, so it confirms both. Spec section 5.4 records both caveats.
+    7. The booking took about 6.3 to 6.7 seconds, against the 20-second timeout in plan section 4.1, which was set from a measured 3.64 seconds. Plan section 4.1 is not changed in this task.
 
 - [x] **T13 — Capture rejected requests (manual)**
   - Refs: spec 5.2, spec 5.3, spec 7.2, plan 4.2, tests 24, 32
@@ -272,36 +296,50 @@ Goal: one real booking made from a local run, with the duplicate-booking protect
     5. Plan section 4.2 no longer names "a token rejection message", because the token rejection is an HTTP 401 (T6 note 4).
 
 - [ ] **T14 — Make one real booking from a local run (manual)**
-  - Refs: spec 6.7, spec 9, plan 5.1
+  - Refs: spec 5.4, spec 6.7, spec 9, plan 4.1, plan 5.1
   - Depends on: T9, T10, T11, T12, T13
   - Done when:
     - A booking fired through the local HTTP trigger returns `Booked` with a booking id.
     - The booking shows on the Picktime site.
     - The Picktime confirmation email arrives.
+    - The two caveats in spec section 5.4 are resolved there: a booking succeeds without `Cache-Control` and `Postman-Token`, and a read succeeds with only `scantoken`.
+    - The time the booking took from the code is recorded here. The 20-second booking timeout in plan section 4.1 is confirmed or changed against it. If it changes, the time estimates in plan sections 3.4 and 8.3 are updated to match.
   - Verify: `func start`, then `POST http://localhost:7071/api/book?bookingDate=<yyyy-MM-dd>`
   - Notes: The trigger books every configured hour. For this test, set only `Booking:Hours:0` in `local.settings.json`, so it makes one booking, and restore the other hours afterwards. Choose a date within the season and the 7-day release window that you have not already booked by hand. Cancel the booking by hand if it is not wanted.
+    1. Added on 2026-10-06, from the `/review-plan` findings G6 and G7, with the owner's approval. T12 left both caveats and the booking time for this task (T12 notes 6 and 7).
+    2. No log line holds the booking's duration until T15. With one hour configured, the HTTP trigger's total response time is the read plus the booking, so record it as an upper bound.
+    3. If the read or the booking fails for a reason other than a taken slot, stop. Do not add a header to make it work. Treat it as a change to spec section 5.4, and get approval first.
 
 ## Phase 4 — Logging
 
 Goal: every run can be understood from its logs.
 
 - [ ] **T15 — Logging and observability**
-  - Refs: spec 3 goal 5, spec 4.1 defect 9, spec 5.2, spec 5.3, spec 6.2, spec 6.3, spec 6.5, plan 4.2, plan 5.1, plan 5.2, plan 5.3
+  - Refs: spec 3 goal 5, spec 4.1 defect 9, spec 5.2, spec 5.3, spec 6.2, spec 6.3, spec 6.5, plan 4.2, plan 5.1, plan 5.2, plan 5.3, test 37
   - Depends on: T8, T9
   - Done when:
     - The worker sends logs to Application Insights through OpenTelemetry, set up as in plan section 5.2: the two packages, `Program.cs`, `host.json` and `appsettings.json`.
     - The exporter is registered only when `APPLICATIONINSIGHTS_CONNECTION_STRING` is set, and `func start` works without it.
-    - Host sampling is off in `host.json`, and no sampling is configured in the worker.
+    - No sampling is configured in the worker. `samplingSettings.isEnabled` is `false` in `host.json`, as a safeguard: with OpenTelemetry the host does not read it (plan section 5.2).
     - Each run logs the start line from spec section 6.2, including the season gate result. A skipped run logs why.
     - Each run logs availability per target, and each attempt with its outcome, booking id and API message.
     - `booking_email_confirmation` is logged per booking, from `BookingResult.EmailConfirmationSent`.
     - Logging is structured, with named placeholders.
     - Every run writes one structured summary event, as in plan section 5.3, including `FailedReadCount`. That covers normal, skipped, `Missed` and `Error` runs. `BookingLoggingExtensions` is the only place it is written.
+    - Test 37 passes: a normal run and a skipped run, through each trigger, write exactly one summary event, with every property the plan section 5.4 query reads.
     - A malformed response body is logged at Warning level, cut to its first 1 KB.
     - HTTP 401 or 403 logs an error that names authentication as the cause.
+    - An unexpected exception on one hour is logged with the exception itself, not only its message, in the catch block in `PicktimeBookingService` (T8 note 6).
+    - The timer trigger logs the schedule's last and next times with their UTC offset, so the log shows London time or UTC (T9 note 9, point 2).
+    - A `Missed` run logs the current UTC time, the current London time and the booking date, as every run must (spec section 6.2). It never reaches the booking service, so it does not get them from the start line.
     - The `scantoken` is never logged. Checked by review.
-  - Verify: the standard test command, then one local run through the HTTP trigger with the log output checked
+  - Verify: the standard test command, then two local runs through the HTTP trigger with the log output checked:
+    1. A date outside the season. This books nothing, and checks the skipped-run lines.
+    2. One real booking, to check the availability and attempt lines. Follow the T14 instructions: set only `Booking:Hours:0`, choose a date in the season and the 7-day window that you have not already booked, restore the other hours afterwards, and cancel the booking by hand if it is not wanted.
   - Notes:
+    1. Added on 2026-10-06, from the `/review-plan` findings G2 and G4, with the owner's approval. The three log items above were left for T15 by earlier tasks, and were not in this list.
+    2. The second Verify run makes a real booking. Do not use the manual trigger between 00:05 and 01:00 on a run day (spec section 9, exception 1).
+    3. The triggers write the summary for a normal or skipped run, not the booking service (plan section 5.3). Decided by the owner on 2026-10-06, from the `/review-plan` finding B1. Keep the trigger calls. Do not add a summary write to the booking service.
 
 ## Phase 5 — Infrastructure and deployment
 
@@ -319,28 +357,36 @@ Goal: the Function runs in Azure on the correct schedule, deployed by CI.
     - The user-assigned managed identity exists, with a federated credential for this repository's `main` branch and the Website Contributor role on the Function App.
     - SCM basic authentication is off, and HTTPS Only is on, on the Function App.
   - Verify: check the settings list in the portal (Function App → Environment variables), the budget (Cost Management → Budgets), and the identity's federated credential and role
-  - Notes: Azure CLI is not installed. The portal works. The Function App's Deployment Center can create the managed identity and its federated credential; choose "User-assigned identity", not "Basic authentication".
+  - Notes: Azure CLI 2.90.0 is installed (plan section 8.2), and the portal also works. The Function App's Deployment Center can create the managed identity and its federated credential; choose "User-assigned identity", not "Basic authentication".
 
 - [ ] **T17 — Add the GitHub Actions workflow**
   - Refs: spec 4.1 defect 8, spec 9, plan 6, plan 8.1, plan 8.4
-  - Depends on: T16
+  - Depends on: T10a, T14, T15, T16
   - Done when:
     - One workflow builds and tests on push to `main` and on pull request, on `windows-latest` with .NET `10.0.x`.
     - It deploys only on `main`, and only when the tests pass.
     - It signs in with OpenID Connect, as in plan section 8.4. No deployment secret is stored in GitHub.
     - The client id, tenant id and subscription id are GitHub repository variables.
+    - NuGet Audit warnings for vulnerable packages (`NU1901` to `NU1904`) fail the build, as plan section 8.4 requires.
   - Verify: a pull request shows a green build and the deploy job is skipped; a push to `main` deploys; SCM basic authentication is still off
   - Notes:
+    1. The first push to `main` after this workflow is merged deploys the Function, and the timer is live from then. It makes real bookings at 00:05 on every run day. So this task waits for T14, which proves one booking from the code, and T15, which makes the runs visible in the logs.
+    2. Do not merge or push to `main` between 00:05 and 01:00 on a run day, because a deployment restarts the host (spec section 9, exception 2).
+    3. Changed on 2026-10-06, from the `/review-plan` finding G1, with the owner's approval. Before, T17 depended only on T16, so it could deploy before T14 and T15.
+    4. From the first deploy, make no booking by hand between 00:00 and 01:00 on a run day (spec section 9). The run would book the fallback target for the same hour. Added on 2026-10-06, from the `/review-plan` finding G8, with the owner's approval.
 
 - [ ] **T18 — Deploy and check the schedule**
-  - Refs: spec 6.1, spec 6.2, plan 3, plan 3.3, plan 8.1
+  - Refs: spec 6.1, spec 6.2, plan 3, plan 3.3, plan 5.2, plan 8.1
   - Depends on: T9a, T15, T17
   - Done when:
     - The Function is deployed from `main`.
-    - The logs show the next scheduled run at 00:05 London time, not 00:05 UTC. This is the check for the trigger time in spec section 6.2.
+    - The trigger time in spec section 6.2 is checked, as plan section 8.1 describes:
+      - Before 25 October 2026: the first scheduled run's UTC timestamp is 23:05 on the day before the run day.
+      - From 25 October 2026: London time equals UTC, so the logs cannot show the difference. Instead, `WEBSITE_TIME_ZONE` is `GMT Standard Time` in the Function App's environment variables.
     - The first scheduled run after deployment logs `IsPastDue`, and, if it is late, whether the late-run window allowed it.
-  - Verify: Function App → Log stream after deployment
+  - Verify: Application Insights → Logs (KQL) after the first scheduled run. Log stream in the portal is not available, because the host uses OpenTelemetry (plan section 5.2).
   - Notes:
+    1. Changed on 2026-10-06, from the `/review-plan` finding G3, with the owner's approval. Before, the check used Log stream, and it could not catch a missing time zone setting after BST ends.
 
 ## Phase 6 — Verify in the season
 
@@ -349,9 +395,12 @@ Goal: the automation is proved in production and left running.
 - [ ] **T19 — Book end to end in Azure (manual)**
   - Refs: spec 6.7, spec 9, plan 5.1
   - Depends on: T18
-  - Done when: a booking fired through the Azure HTTP trigger shows on the Picktime site, and its confirmation email arrives.
+  - Done when:
+    - A booking fired through the Azure HTTP trigger shows on the Picktime site, and its confirmation email arrives.
+    - All three hours are restored in the Azure app settings afterwards.
   - Verify: `POST https://<function-app>.azurewebsites.net/api/book?bookingDate=<yyyy-MM-dd>`, with the function key in the `x-functions-key` header
   - Notes: As in T14, set only `Booking:Hours:0` in the Azure app settings for this test, so it makes one booking, then restore the other hours. Choose a date you have not already booked. Cancel the booking by hand if it is not wanted.
+    1. Changing an app setting restarts the host. Do not change one between 00:05 and 01:00 on a run day (spec section 9, exception 2). Added on 2026-10-06, from the `/review-plan` suggestion S10.
 
 - [ ] **T20 — Pin the 90-day query (manual)**
   - Refs: spec 9, plan 5.2, plan 5.4, plan 8.3
@@ -377,7 +426,7 @@ Goal: the automation is proved in production and left running.
   - Depends on: T18
   - Done when:
     - `README.md` says what the project does, how to run it locally, and which settings it needs.
-    - It states the operating rules in spec section 9: the manual trigger is not used between 00:05 and 01:00 on a run day, or for a booking date already booked, and no deployment is made between 00:05 and 01:00 on a run day.
+    - It states the operating rules in spec section 9: the manual trigger is not used between 00:05 and 01:00 on a run day, or for a booking date already booked; no deployment is made between 00:05 and 01:00 on a run day; and no booking is made by hand between 00:00 and 01:00 on a run day.
   - Verify: follow the README from a fresh clone
   - Notes:
 
@@ -413,3 +462,5 @@ Goal: the automation is proved in production and left running.
 * 2026-10-05 — T10 — Retry the availability read only — branch `task/t10-retry-availability-read`
 * 2026-10-05 — T11 — Handle an unknown booking result — branch `task/t11-unknown-booking-result`
 * 2026-10-06 — T13 — Capture rejected requests — branch `task/t13-capture-rejections`
+* 2026-10-06 — T12 — Find the minimum header set — branch `task/t12-minimum-headers`
+* 2026-10-06 — T10a — Bound the read client's timeout — branch `task/t12-minimum-headers`
