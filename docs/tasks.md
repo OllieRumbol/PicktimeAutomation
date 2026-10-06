@@ -217,9 +217,9 @@ Goal: the booking rules in spec section 6 are implemented, covered by their test
     4. Test 33 is in `PicktimeApiRegistrationTests`. Its HTTP 401 case is the existing test 32 read test, which uses the same registration and asserts one request. Extra tests: a GET timeout in the handler, the caller's cancellation through the handler, a booking network error sent once, a POST through the read client sent once, and the booking client's 20-second timeout. The tests set the retry backoff to zero with `ConfigureAll<HttpStandardResilienceOptions>`, so they do not depend on the handler's internal options name.
     5. A check by mutation: with the two clients swapped in the registration, test 33 fails in both directions. Without `DisableForUnsafeHttpMethods`, the read-client POST test fails.
     6. `/code-review` found 8 points and no blocker. Points 2 to 6 and 8 are fixed: the read client never retries a POST (`DisableForUnsafeHttpMethods`), every handler rejection becomes `PicktimeReadException`, the comments say "up to 3 retries", and a booking network error is tested through the real registration. Point 7 (build the service with `ActivatorUtilities`) is not done: it matches the two `HttpClient` arguments by order alone, and the named arguments are clearer. Point 1 is open for the owner: the read client keeps `HttpClient`'s default 100-second timeout, which still applies while the response body downloads, after the handler has returned. A body that stalls can make one read take up to 100 seconds, not the 30 in plan section 4.1. Plan section 4.1 says nothing is configured for the GET, so a fix, such as a 30-second `Timeout` on the read client, is a plan change.
-    7. Point 1 was decided on 2026-10-06, from the `/review-plan` finding G5: the read client gets a 35-second timeout. Plan section 4.1 is updated, and T10a makes the change.
+    7. Point 1 was decided on 2026-10-06, from the `/review-plan` finding G5: the read client gets a 35-second timeout. Plan section 4.1 is updated, and T10a makes the change. T10a found that point 1 understated the problem: the handler sets the client timeout to infinite, not 100 seconds (T10a note 1).
 
-- [ ] **T10a — Bound the read client's timeout**
+- [x] **T10a — Bound the read client's timeout**
   - Refs: plan 4.1, plan 4.2, test 33
   - Depends on: T10
   - Done when:
@@ -227,7 +227,11 @@ Goal: the booking rules in spec section 6 are implemented, covered by their test
     - A test, built from the real `AddPicktimeServices` registration, checks the read client's 35-second timeout, like the existing test for the booking client's 20 seconds.
     - Test 33 and the other read tests still pass, so the handler's retries and its 30-second limit are unchanged.
   - Verify: the standard test command
-  - Notes: Added on 2026-10-06, from the `/review-plan` finding G5, with the owner's approval (T10 note 7). It is numbered T10a so that later task numbers do not change. Do it before T17, which deploys the Function.
+  - Notes: Added on 2026-10-06, from the `/review-plan` finding G5, with the owner's approval (T10 note 7). It is numbered T10a so that later task numbers do not change. Do it before T17, which deploys the Function. Done on 2026-10-06, in the same pull request as T12, by the owner's choice.
+    1. The problem was worse than T10 note 6 said. `AddStandardResilienceHandler` sets the client's `Timeout` to infinite, not the default 100 seconds. So before this task, a stalled body could hold a read until the 10-minute function timeout. The new test showed it: with the timeout set in the `AddHttpClient` callback, the read client's `Timeout` was infinite, because the handler's setting runs later. Plan section 4.1 is corrected.
+    2. The fix sets `ReadTimeout` (35 seconds) with `ConfigureHttpClient` after `AddStandardResilienceHandler`, so it runs last. The new test, `AddPicktimeServices_ReadClient_TimesOutAfter35Seconds`, failed before the fix and passes after it.
+    3. The read calls `GetAsync` with the default `ResponseContentRead`, so the whole body is read inside the client timeout. A client timeout throws `OperationCanceledException` while the caller's token is not cancelled, which `GetAvailableSlotsAsync` already turns into `PicktimeReadException`. No other code changed.
+    4. `/code-review` found one point and no blocker: T10 note 7 referred to this note before it existed. Fixed by this note.
 
 - [x] **T11 — Handle an unknown booking result**
   - Refs: spec 6.4, spec 6.5, spec 9, plan 4.1, plan 7.4, tests 12–14
@@ -459,3 +463,4 @@ Goal: the automation is proved in production and left running.
 * 2026-10-05 — T11 — Handle an unknown booking result — branch `task/t11-unknown-booking-result`
 * 2026-10-06 — T13 — Capture rejected requests — branch `task/t13-capture-rejections`
 * 2026-10-06 — T12 — Find the minimum header set — branch `task/t12-minimum-headers`
+* 2026-10-06 — T10a — Bound the read client's timeout — branch `task/t12-minimum-headers`

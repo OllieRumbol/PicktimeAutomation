@@ -211,6 +211,19 @@ public sealed class PicktimeApiRegistrationTests
         Assert.AreEqual(TimeSpan.FromSeconds(20), bookingClient.Timeout);
     }
 
+    [TestMethod]
+    public void AddPicktimeServices_ReadClient_TimesOutAfter35Seconds()
+    {
+        var handler = StubHttpMessageHandler.Returning(HttpStatusCode.OK, string.Empty);
+        using var provider = BuildProvider(handler);
+        var httpClientFactory = provider.GetRequiredService<IHttpClientFactory>();
+
+        var readClient = httpClientFactory.CreateClient(ServiceCollectionExtensions.ReadClientName);
+
+        // The resilience handler sets the timeout to infinite, so without this a stalled body can hold a read (plan section 4.1).
+        Assert.AreEqual(TimeSpan.FromSeconds(35), readClient.Timeout);
+    }
+
     private static ServiceProvider BuildProvider(
         StubHttpMessageHandler handler,
         Action<HttpStandardResilienceOptions>? configureResilience = null)

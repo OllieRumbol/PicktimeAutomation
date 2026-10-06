@@ -36,6 +36,12 @@ public static class ServiceCollectionExtensions
     /// </summary>
     public static readonly TimeSpan BookingTimeout = TimeSpan.FromSeconds(20);
 
+    /// <summary>
+    /// Just above the resilience handler's 30-second total, so the handler still stops a normal timeout.
+    /// This stops a response body that stalls after the handler has returned (plan section 4.1).
+    /// </summary>
+    public static readonly TimeSpan ReadTimeout = TimeSpan.FromSeconds(35);
+
     public static IServiceCollection AddPicktimeServices(this IServiceCollection services, IConfiguration configuration)
     {
         ArgumentNullException.ThrowIfNull(services);
@@ -66,8 +72,12 @@ public static class ServiceCollectionExtensions
     {
         // The standard handler's defaults are the plan: up to 3 retries from 2 seconds, 10 seconds per attempt,
         // 30 in total. A POST sent through this client by mistake is still never retried.
-        services.AddHttpClient(ReadClientName, ConfigurePicktimeClient)
-            .AddStandardResilienceHandler(options => options.Retry.DisableForUnsafeHttpMethods());
+        var readClient = services.AddHttpClient(ReadClientName, ConfigurePicktimeClient);
+        readClient.AddStandardResilienceHandler(options => options.Retry.DisableForUnsafeHttpMethods());
+
+        // After the handler, which sets the client timeout to infinite. Without this, a stalled body could hold a read
+        // until the function timeout.
+        readClient.ConfigureHttpClient(client => client.Timeout = ReadTimeout);
 
         services.AddHttpClient(BookingClientName, (serviceProvider, client) =>
         {
