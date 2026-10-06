@@ -634,7 +634,7 @@ With the setting, `func start` reports "Function TargetBookingFunction is disabl
 
 Effectively free, but not literally zero.
 
-* **Functions free grant**, checked on 2026-09-30: 1 million executions and 400,000 GB-s of compute per month. Microsoft Learn does not state these figures. It refers to the Azure Functions pricing page, so check them there again when the resources are created. It applies only to pay-as-you-go subscriptions, and it is shared by all function apps in the subscription.
+* **Functions free grant**, checked on 2026-09-30: 1 million executions and 400,000 GB-s of compute per month. It applies only to pay-as-you-go subscriptions, and it is shared by all function apps in the subscription. Microsoft Learn does not state these figures. It refers to the Azure Functions pricing page, so check them there again when the resources are created.
 * **Expected usage:** about 13 runs a month. Each run takes about 20 seconds, so at up to 0.25 GB of memory that is under 100 GB-s a month. It is negligible against the grant, even with other function apps in the same subscription.
 * Logs (Log Analytics workspace): the first 5 GB a month per billing account is free (checked on 2026-10-06). About 78 runs per season, each writing a few dozen log lines, is negligible against it.
 * Daily cap: 0.1 GB a day on the workspace, which is free to set. Expected usage is hundreds of times smaller. It stops a logging bug from running up a cost before the £1 budget alert can report it. The trade-off: if the cap is ever reached, logs stop for the rest of that day, which can only happen during a runaway bug. Spec section 9 records this as the one accepted exception to "no log line from a run is ever discarded".
