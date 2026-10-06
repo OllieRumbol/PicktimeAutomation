@@ -412,7 +412,7 @@ A run outside the season is reported as skipped, and appears in the run record l
 
 No separate state store is needed. A slot already booked, whether by this automation or by hand, is absent from the availability response. The availability read is therefore the guard against double booking on one target.
 
-It does not stop a second run for the same booking date from booking the fallback target for an hour already held on the preferred target. So two runs for the same booking date must not both book. Section 9 records the two cases where this is accepted, and the rules that keep them rare.
+It does not stop a second run for the same booking date from booking the fallback target for an hour already held on the preferred target. So two runs for the same booking date must not both book. Section 9 records the three cases where this is accepted, and the rules that keep them rare. A booking made by hand for the same booking date, before the run reads availability, has the same effect. Section 9 rules it out.
 
 ### 6.7 Manual trigger
 
@@ -480,6 +480,8 @@ One observation on timing: bookings are made by hand until the automation is dep
   1. A manual run for the same booking date as a scheduled run. The manual trigger is not used between 00:05 and 01:00 on a run day, because a late scheduled run can start at any time in that window (section 6.1). It is not used for a booking date that a run has already booked.
   2. A scheduled run that is run again after the host stops in the middle of it, and restarts before 01:00 (section 6.1). The second run can book the fallback target for hours the first run booked. No deployment is made between 00:05 and 01:00 on a run day.
   3. A late run for a run day missed in an outage of more than one day, when the host starts a few seconds before the run time on a later run day. The late run starts just after the run time, so it books (section 6.1), and that day's own run then books the same booking date again. The second run can book the fallback target for hours the first run booked.
+
+  A booking made by hand is not an exception. If one is made for the booking date before the run reads availability, the run sees that slot as taken and books the fallback target for the same hour. Slots are released at London midnight, and a late run can start as late as 01:00 (section 6.1). So no booking is made by hand between 00:00 and 01:00 on a run day.
 * All tests pass.
 * Deployment is automated, and a failing test stops a deployment.
 * One real booking has been confirmed on the Picktime site from a run in Azure, and its confirmation email arrived.

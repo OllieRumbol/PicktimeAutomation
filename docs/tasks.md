@@ -368,6 +368,7 @@ Goal: the Function runs in Azure on the correct schedule, deployed by CI.
     1. The first push to `main` after this workflow is merged deploys the Function, and the timer is live from then. It makes real bookings at 00:05 on every run day. So this task waits for T14, which proves one booking from the code, and T15, which makes the runs visible in the logs.
     2. Do not merge or push to `main` between 00:05 and 01:00 on a run day, because a deployment restarts the host (spec section 9, exception 2).
     3. Changed on 2026-10-06, from the `/review-plan` finding G1, with the owner's approval. Before, T17 depended only on T16, so it could deploy before T14 and T15.
+    4. From the first deploy, make no booking by hand between 00:00 and 01:00 on a run day (spec section 9). The run would book the fallback target for the same hour. Added on 2026-10-06, from the `/review-plan` finding G8, with the owner's approval.
 
 - [ ] **T18 — Deploy and check the schedule**
   - Refs: spec 6.1, spec 6.2, plan 3, plan 3.3, plan 5.2, plan 8.1
@@ -417,7 +418,7 @@ Goal: the automation is proved in production and left running.
   - Depends on: T18
   - Done when:
     - `README.md` says what the project does, how to run it locally, and which settings it needs.
-    - It states the operating rules in spec section 9: the manual trigger is not used between 00:05 and 01:00 on a run day, or for a booking date already booked, and no deployment is made between 00:05 and 01:00 on a run day.
+    - It states the operating rules in spec section 9: the manual trigger is not used between 00:05 and 01:00 on a run day, or for a booking date already booked; no deployment is made between 00:05 and 01:00 on a run day; and no booking is made by hand between 00:00 and 01:00 on a run day.
   - Verify: follow the README from a fresh clone
   - Notes:
 
