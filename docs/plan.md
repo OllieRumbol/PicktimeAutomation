@@ -329,7 +329,7 @@ The first two rows match the rejections captured on 2026-10-06. A rejected token
 
 Spec section 9 records the three exceptions, and the rules for when the manual trigger is used and when deployments are made.
 
-**Raw response bodies in logs** may contain the archer's name or email. This is accepted, because both are already public by the owner's choice (section 6).
+**Raw response bodies in logs** may contain the archer's name or email. This is accepted, as recorded in section 6.
 
 Retries on the `GET` use the standard `Microsoft.Extensions.Http.Resilience` handler. Because the policy differs per endpoint, either register two named clients, or register the handler only for the availability path. Whichever is chosen, it must be impossible to accidentally pick up an automatic retry on the booking POST. Two named clients are registered: a read client with the handler and the 35-second timeout, and a booking client with no handler and the 20-second timeout. The handler is added to the read client only, never through `ConfigureHttpClientDefaults`, which would add it to both. The handler is also set never to retry a `POST`, so a booking sent through the read client by mistake is still sent once. Test 33 fails if the two are swapped.
 
@@ -445,6 +445,7 @@ Adding a push or email alert later is a small change. An Azure Monitor alert on 
 | `scantoken` going forward | Move to configuration, and to a Function App application setting in Azure. Not in source. |
 | Email address | Move to configuration. The repository is public, so it should not be a literal in source. |
 | Name and email in git history | Accepted on 2026-09-30, by the owner's choice. The archer's name and email were literals in committed code, so they stay in git history after they move to configuration. The name also appears as example values in section 2. Rewriting history was rejected: it is destructive, and GitHub keeps the old commits in merged pull requests anyway. |
+| Name and email in logs | Accepted on 2026-10-06, by the owner's choice, as an exception to the owner's C# standard, which says not to log personal data. A malformed response body is logged at Warning level, cut to its first 1 KB (section 4.2), and a booking response can hold the archer's name and email. The raw text is what makes a malformed body possible to diagnose. The data is the owner's own, it is already public in git history (row above), and the logs stay in the owner's private Application Insights resource for up to 90 days (section 8.3). Only these two fields are accepted. The `scantoken` is never logged. |
 | `.gitignore` | Remove the self-ignoring line, then commit both ignore files. This matters because the token will live in `local.settings.json`. |
 | `local.settings.json` | Stays ignored. Never committed. |
 | Deployment credentials | GitHub Actions signs in to Azure with OpenID Connect (section 8.4). No deployment secret is stored in GitHub, and SCM basic authentication stays off on the Function App. A publish profile was rejected: Microsoft marks it "not recommended", and it needs basic authentication switched on, which Microsoft says makes the app less secure (checked on 2026-09-30). |
