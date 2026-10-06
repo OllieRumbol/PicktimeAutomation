@@ -281,14 +281,19 @@ Goal: one real booking made from a local run, with the duplicate-booking protect
     5. Plan section 4.2 no longer names "a token rejection message", because the token rejection is an HTTP 401 (T6 note 4).
 
 - [ ] **T14 — Make one real booking from a local run (manual)**
-  - Refs: spec 6.7, spec 9, plan 5.1
+  - Refs: spec 5.4, spec 6.7, spec 9, plan 4.1, plan 5.1
   - Depends on: T9, T10, T11, T12, T13
   - Done when:
     - A booking fired through the local HTTP trigger returns `Booked` with a booking id.
     - The booking shows on the Picktime site.
     - The Picktime confirmation email arrives.
+    - The two caveats in spec section 5.4 are resolved there: a booking succeeds without `Cache-Control` and `Postman-Token`, and a read succeeds with only `scantoken`.
+    - The time the booking took from the code is recorded here. The 20-second booking timeout in plan section 4.1 is confirmed or changed against it. If it changes, the time estimates in plan sections 3.4 and 8.3 are updated to match.
   - Verify: `func start`, then `POST http://localhost:7071/api/book?bookingDate=<yyyy-MM-dd>`
   - Notes: The trigger books every configured hour. For this test, set only `Booking:Hours:0` in `local.settings.json`, so it makes one booking, and restore the other hours afterwards. Choose a date within the season and the 7-day release window that you have not already booked by hand. Cancel the booking by hand if it is not wanted.
+    1. Added on 2026-10-06, from the `/review-plan` findings G6 and G7, with the owner's approval. T12 left both caveats and the booking time for this task (T12 notes 6 and 7).
+    2. No log line holds the booking's duration until T15. With one hour configured, the HTTP trigger's total response time is the read plus the booking, so record it as an upper bound.
+    3. If the read or the booking fails for a reason other than a taken slot, stop. Do not add a header to make it work. Treat it as a change to spec section 5.4, and get approval first.
 
 ## Phase 4 — Logging
 
