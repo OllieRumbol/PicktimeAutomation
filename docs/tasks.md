@@ -316,7 +316,7 @@ Goal: every run can be understood from its logs.
   - Done when:
     - The worker sends logs to Application Insights through OpenTelemetry, set up as in plan section 5.2: the two packages, `Program.cs`, `host.json` and `appsettings.json`.
     - The exporter is registered only when `APPLICATIONINSIGHTS_CONNECTION_STRING` is set, and `func start` works without it.
-    - Host sampling is off in `host.json`, and no sampling is configured in the worker.
+    - No sampling is configured in the worker. `samplingSettings.isEnabled` is `false` in `host.json`, as a safeguard: with OpenTelemetry the host does not read it (plan section 5.2).
     - Each run logs the start line from spec section 6.2, including the season gate result. A skipped run logs why.
     - Each run logs availability per target, and each attempt with its outcome, booking id and API message.
     - `booking_email_confirmation` is logged per booking, from `BookingResult.EmailConfirmationSent`.
@@ -353,7 +353,7 @@ Goal: the Function runs in Azure on the correct schedule, deployed by CI.
     - The user-assigned managed identity exists, with a federated credential for this repository's `main` branch and the Website Contributor role on the Function App.
     - SCM basic authentication is off, and HTTPS Only is on, on the Function App.
   - Verify: check the settings list in the portal (Function App → Environment variables), the budget (Cost Management → Budgets), and the identity's federated credential and role
-  - Notes: Azure CLI is not installed. The portal works. The Function App's Deployment Center can create the managed identity and its federated credential; choose "User-assigned identity", not "Basic authentication".
+  - Notes: Azure CLI 2.90.0 is installed (plan section 8.2), and the portal also works. The Function App's Deployment Center can create the managed identity and its federated credential; choose "User-assigned identity", not "Basic authentication".
 
 - [ ] **T17 — Add the GitHub Actions workflow**
   - Refs: spec 4.1 defect 8, spec 9, plan 6, plan 8.1, plan 8.4
@@ -363,6 +363,7 @@ Goal: the Function runs in Azure on the correct schedule, deployed by CI.
     - It deploys only on `main`, and only when the tests pass.
     - It signs in with OpenID Connect, as in plan section 8.4. No deployment secret is stored in GitHub.
     - The client id, tenant id and subscription id are GitHub repository variables.
+    - NuGet Audit warnings for vulnerable packages (`NU1901` to `NU1904`) fail the build, as plan section 8.4 requires.
   - Verify: a pull request shows a green build and the deploy job is skipped; a push to `main` deploys; SCM basic authentication is still off
   - Notes:
     1. The first push to `main` after this workflow is merged deploys the Function, and the timer is live from then. It makes real bookings at 00:05 on every run day. So this task waits for T14, which proves one booking from the code, and T15, which makes the runs visible in the logs.
@@ -390,9 +391,12 @@ Goal: the automation is proved in production and left running.
 - [ ] **T19 — Book end to end in Azure (manual)**
   - Refs: spec 6.7, spec 9, plan 5.1
   - Depends on: T18
-  - Done when: a booking fired through the Azure HTTP trigger shows on the Picktime site, and its confirmation email arrives.
+  - Done when:
+    - A booking fired through the Azure HTTP trigger shows on the Picktime site, and its confirmation email arrives.
+    - All three hours are restored in the Azure app settings afterwards.
   - Verify: `POST https://<function-app>.azurewebsites.net/api/book?bookingDate=<yyyy-MM-dd>`, with the function key in the `x-functions-key` header
   - Notes: As in T14, set only `Booking:Hours:0` in the Azure app settings for this test, so it makes one booking, then restore the other hours. Choose a date you have not already booked. Cancel the booking by hand if it is not wanted.
+    1. Changing an app setting restarts the host. Do not change one between 00:05 and 01:00 on a run day (spec section 9, exception 2). Added on 2026-10-06, from the `/review-plan` suggestion S10.
 
 - [ ] **T20 — Pin the 90-day query (manual)**
   - Refs: spec 9, plan 5.2, plan 5.4, plan 8.3

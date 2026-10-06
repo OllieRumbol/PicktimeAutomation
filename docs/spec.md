@@ -49,6 +49,8 @@ The club uses Picktime for indoor target booking. Bookings open exactly 7 days i
 
 ## 4. Current state of the code
 
+This section records the code as it was when this specification was written, in September 2026. It is the starting point, and it is not updated as the defects are fixed.
+
 The repository contains a working skeleton. It compiles and has the right shape. The Picktime API is proven to accept a booking, but this code has never made one, because of defect 1 below.
 
 | Project | Purpose | State |

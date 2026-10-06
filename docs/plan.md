@@ -129,7 +129,7 @@ When no date is supplied, the service computes it from the injected `TimeProvide
 
 That placement is deliberate. If the trigger computed the date, the date rule — the thing most likely to be wrong, per spec section 6.2 — would live in an Azure Functions entry point, which is awkward to unit test. Keeping it inside the service means both triggers are thin adapters with no logic of their own, and the rule is covered by ordinary unit tests.
 
-**Service registration** lives in one extension method, `AddPicktimeServices(IServiceCollection)`, in the `PicktimeAutomation.Services` project, which `Program.cs` calls. `LondonClock` is in the same project, so `PicktimeAutomation.ServicesTests` can test both. This includes the options, the services and both HTTP clients with their retry policies. Tests build the real registrations from the same method, so test 33 checks the configuration that actually runs (section 7.2, rule 7).
+**Service registration** lives in one extension method, `AddPicktimeServices(IServiceCollection, IConfiguration)`, in the `PicktimeAutomation.Services` project, which `Program.cs` calls. `LondonClock` is in the same project, so `PicktimeAutomation.ServicesTests` can test both. This includes the options, the services and both HTTP clients with their retry policies. Tests build the real registrations from the same method, so test 33 checks the configuration that actually runs (section 7.2, rule 7).
 
 **Host setup and HTTP model.** `Program.cs` uses `FunctionsApplication.CreateBuilder(args)` with `ConfigureFunctionsWebApplication()`, which is ASP.NET Core integration, with the package `Microsoft.Azure.Functions.Worker.Extensions.Http.AspNetCore`. It replaces the current `new HostBuilder()` with `ConfigureFunctionsWorkerDefaults()`, for two reasons:
 
@@ -359,10 +359,10 @@ Application Insights stays within its free allowance. See section 8.3.
 | --- | --- |
 | Packages | `Microsoft.Azure.Functions.Worker.OpenTelemetry` and `Azure.Monitor.OpenTelemetry.Exporter` |
 | `Program.cs` | `AddOpenTelemetry().UseFunctionsWorkerDefaults().UseAzureMonitorExporter()`. Register the exporter only when `APPLICATIONINSIGHTS_CONNECTION_STRING` is set, so local runs work without Azure. |
-| `host.json` | `"telemetryMode": "OpenTelemetry"`. Also set `samplingSettings.isEnabled` to `false`, which fixes defect 9 in spec section 4.1 for the host's own logs. `functionTimeout` is set here too (section 4.1). |
+| `host.json` | `"telemetryMode": "OpenTelemetry"`. In this mode the `logging.applicationInsights` section, including `samplingSettings`, does not apply (Microsoft Learn, "Use OpenTelemetry with Azure Functions", checked on 2026-10-06). So that setting no longer fixes defect 9 in spec section 4.1. Still set `samplingSettings.isEnabled` to `false`, so sampling stays off if the mode is ever removed. `functionTimeout` is set here too (section 4.1). |
 | `appsettings.json` | Worker log levels: `Default` at `Information`, `Microsoft` at `Warning`. Worker log levels are set here, not in `host.json`. |
 
-No sampling is configured in the worker. Sampling is designed for high volume, and at three runs a week there is nothing to gain from it. Whether the exporter samples by default was not confirmed, so the first run in Azure is checked: the section 5.4 query must return it with every column filled.
+Defect 9 is fixed because no sampling is configured, in the host or in the worker. Sampling is designed for high volume, and at three runs a week there is nothing to gain from it. Whether the exporter samples by default was not confirmed, so the first run in Azure is checked: the section 5.4 query must return it with every column filled.
 
 The libraries are free and open source. The logs go to the same Application Insights resource, within the same free allowance (section 8.3), so this choice adds no cost.
 
@@ -573,7 +573,7 @@ Five tests, deliberately. Both triggers are thin adapters. The only logic is the
 | Plan | Consumption (serverless) | Within the free grant |
 | Storage account | Standard LRS | Required by the timer trigger |
 | Application Insights | Workspace-based | Holds no data itself. It sends everything to the Log Analytics workspace below. |
-| Log Analytics workspace | Pay-as-you-go (per GB), with a daily cap of 0.1 GB | Where logs are stored and charged. The first 5 GB a month per billing account is free, and Application Insights data is kept for 90 days at no charge (checked on 2026-09-30). Expected usage: a few MB a month. See section 8.3. |
+| Log Analytics workspace | Pay-as-you-go (per GB), with a daily cap of 0.1 GB | Where logs are stored and charged. The first 5 GB a month per billing account is free, and Application Insights data is kept for 90 days at no charge (checked on 2026-09-30, and again on 2026-10-06). Expected usage: a few MB a month. See section 8.3. |
 | Function App | .NET 10 isolated worker | |
 | Operating system | **Windows** | Required for .NET 10 on the Consumption plan, and chosen for the time zone setting. See below. |
 | Budget | £1 per month, on the resource group | Emails an alert when actual cost reaches £1. Budgets are free. See section 8.3. |
@@ -591,7 +591,7 @@ Plus every setting in section 2.
 
 **Why Windows.** There are two reasons, and either one is enough.
 
-1. **.NET 10 is not available on the Linux Consumption plan.** Microsoft's documentation states that .NET 9 is the last .NET version supported there, and that the Linux Consumption plan retires on 30 September 2028. Apps on the Windows Consumption plan are not affected. Checked on 2026-09-30.
+1. **.NET 10 is not available on the Linux Consumption plan.** Microsoft's documentation states that .NET 9 is the last .NET version supported there, and that the Linux Consumption plan retires on 30 September 2028. Apps on the Windows Consumption plan are not affected. Checked on 2026-09-30, and again on 2026-10-06: .NET 10 is generally available on Functions v4.
 2. **The time zone setting.** `WEBSITE_TIME_ZONE` takes a Windows time zone id on a Windows plan (`GMT Standard Time`) and an IANA id on a Linux plan (`Europe/London`). The setting is long-established and well documented on Windows, and less reliably behaved on Linux. A wrong trigger time is the worst failure this project can have, so the better-trodden path wins.
 
 **Flex Consumption**, Microsoft's recommended successor to the Linux Consumption plan, runs only on Linux. Reason 2 therefore applies to it too, so it is not used.
@@ -622,7 +622,7 @@ Checked on this machine:
 
 Do not install Azurite with `npm install -g azurite`. This machine's Node.js is v16.9.1, which current Azurite does not support. The bundled copy carries its own runtime, so it does not use the machine's Node.js. It is free, and nothing runs in Azure.
 
-Checked on 2026-10-01, in T2: Azurite started this way, and `func start` then listed the timer trigger.
+Checked on 2026-10-01: Azurite started this way, and `func start` then listed the timer trigger.
 
 **The timer is disabled for local runs.** `local.settings.json` sets `AzureWebJobs.TargetBookingFunction.Disabled` to `true`. Without it, `func start` can make real calls to Picktime: the timer keeps a record of its runs in Azurite, and when it sees a missed scheduled run it fires at once. The late-run check (section 3) does not prevent this. A missed run that fires between 00:05 and 01:00 on a run day is inside the late-run window, and books. So the `Disabled` setting is the only protection.
 
@@ -634,11 +634,11 @@ With the setting, `func start` reports "Function TargetBookingFunction is disabl
 
 Effectively free, but not literally zero.
 
-* **Functions free grant**, checked on 2026-09-30: 1 million executions and 400,000 GB-s of compute per month. It applies only to pay-as-you-go subscriptions, and it is shared by all function apps in the subscription.
+* **Functions free grant**, checked on 2026-09-30: 1 million executions and 400,000 GB-s of compute per month. Microsoft Learn does not state these figures. It refers to the Azure Functions pricing page, so check them there again when the resources are created. It applies only to pay-as-you-go subscriptions, and it is shared by all function apps in the subscription.
 * **Expected usage:** about 13 runs a month. Each run takes about 20 seconds, so at up to 0.25 GB of memory that is under 100 GB-s a month. It is negligible against the grant, even with other function apps in the same subscription.
-* Logs (Log Analytics workspace): the first 5 GB a month per billing account is free. About 78 runs per season, each writing a few dozen log lines, is negligible against it.
+* Logs (Log Analytics workspace): the first 5 GB a month per billing account is free (checked on 2026-10-06). About 78 runs per season, each writing a few dozen log lines, is negligible against it.
 * Daily cap: 0.1 GB a day on the workspace, which is free to set. Expected usage is hundreds of times smaller. It stops a logging bug from running up a cost before the £1 budget alert can report it. The trade-off: if the cap is ever reached, logs stop for the rest of that day, which can only happen during a runaway bug. Spec section 9 records this as the one accepted exception to "no log line from a run is ever discarded".
-* Log retention: Application Insights tables keep data for 90 days at no charge. Keep the default. Lowering it saves nothing, because the first 31 days are included in the ingestion price. Raising it adds a cost.
+* Log retention: Application Insights tables keep data for 90 days at no charge (checked on 2026-10-06). Keep the default. Lowering it saves nothing, because the first 31 days are included in the ingestion price. Raising it adds a cost.
 * Storage account: the only unavoidable charge. Azure Functions cannot run without a storage account, and the timer trigger keeps its schedule state there. Azure has no permanent free tier for storage. Estimated at well under £1 per month, from a tiny amount of stored data and the background transactions of the Functions host. This figure is an estimate, not checked against the storage pricing page.
 
 **Approved on 2026-09-30:** the storage account cost, up to £1 per month. The £1 budget in section 8.1 sends an alert if the real cost is ever higher, so the estimate is checked by Azure rather than trusted.
@@ -648,7 +648,7 @@ Effectively free, but not literally zero.
 A single GitHub Actions workflow in `.github/workflows/`. It runs on `windows-latest`, to match the Function App's operating system (section 8.1), and installs .NET `10.0.x` with `actions/setup-dotnet`.
 
 1. Trigger on push to `main`, and on pull request.
-2. Restore, build, and run all tests.
+2. Restore, build, and run all tests. NuGet Audit runs on restore, and its warnings for vulnerable packages (`NU1901` to `NU1904`) are errors in the workflow, as the owner's C# standard requires. So a package with a known vulnerability stops the build, and it never deploys.
 3. On `main` only, and only when tests pass, publish and deploy to the Function App.
 4. Sign in with `azure/login` using OpenID Connect, then deploy with `Azure/functions-action`. The workflow needs the `id-token: write` permission. This is Microsoft's recommended method (checked on 2026-09-30).
 5. The managed identity's client id, tenant id and subscription id are GitHub repository variables. They identify the identity; they are not secrets.
