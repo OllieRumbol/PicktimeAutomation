@@ -52,7 +52,11 @@ public sealed class PicktimeApiRegistrationTests
         }
     }
 
+    // The token rejection captured on 2026-10-06, from a booking sent with an invalid scantoken (spec section 5.3).
+    private const string TokenRejectedResponse = """{"status": false, "message": "Auth token validation error", "version": "1.0.0"}""";
+
     // Test 32: the availability read. It is also test 33's HTTP 401 case: a rejected token is never retried.
+    // The real read does not check the token (spec section 5.3), so this is a safeguard.
     [TestMethod]
     [DataRow(HttpStatusCode.Unauthorized)]
     [DataRow(HttpStatusCode.Forbidden)]
@@ -68,13 +72,13 @@ public sealed class PicktimeApiRegistrationTests
         Assert.HasCount(1, handler.Requests);
     }
 
-    // Test 32: the booking request.
+    // Test 32: the booking request. HTTP 401 is the captured rejection. No HTTP 403 has been seen, so that row is a safeguard.
     [TestMethod]
-    [DataRow(HttpStatusCode.Unauthorized)]
-    [DataRow(HttpStatusCode.Forbidden)]
-    public async Task CreateBookingAsync_TokenRejected_ThrowsPicktimeAuthenticationExceptionWithoutRetry(HttpStatusCode statusCode)
+    [DataRow(HttpStatusCode.Unauthorized, TokenRejectedResponse)]
+    [DataRow(HttpStatusCode.Forbidden, "")]
+    public async Task CreateBookingAsync_TokenRejected_ThrowsPicktimeAuthenticationExceptionWithoutRetry(HttpStatusCode statusCode, string body)
     {
-        var handler = StubHttpMessageHandler.Returning(statusCode, string.Empty);
+        var handler = StubHttpMessageHandler.Returning(statusCode, body);
         using var provider = BuildProvider(handler);
         var api = provider.GetRequiredService<IPicktimeApiService>();
 

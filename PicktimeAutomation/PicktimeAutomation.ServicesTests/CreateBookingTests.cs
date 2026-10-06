@@ -123,18 +123,19 @@ public sealed class CreateBookingTests
         Assert.IsTrue(result.EmailConfirmationSent);
     }
 
-    // Test 24
+    // Test 24: the slot-taken rejection captured on 2026-10-06 (spec section 5.2).
     [TestMethod]
     public async Task CreateBookingAsync_StatusIsFalse_ReturnsRejectedWithTheMessage()
     {
-        // Provisional fixture: the failure shape in spec section 5.2. T13 replaces it with a captured rejection.
-        var handler = StubHttpMessageHandler.Returning(HttpStatusCode.OK, """{ "status": false, "message": "Slot is not available" }""");
+        var handler = StubHttpMessageHandler.Returning(
+            HttpStatusCode.OK,
+            """{"status": false, "message": "Another event or booking is overlapping with this time.", "version": "1.0.0"}""");
         var service = CreateService(handler);
 
         var result = await service.CreateBookingAsync(Request, CancellationToken.None);
 
         Assert.AreEqual(BookingResultStatus.Rejected, result.Status);
-        Assert.AreEqual("Slot is not available", result.Message);
+        Assert.AreEqual("Another event or booking is overlapping with this time.", result.Message);
         Assert.IsNull(result.BookingId);
     }
 
