@@ -2,7 +2,7 @@
 
 > **What this document is for:** It answers *what do we do next?* It splits the approved design into small, verifiable steps and tracks progress against them.
 
-Last updated: 2026-10-05
+Last updated: 2026-10-06
 
 <!--
 How to use this file
@@ -117,7 +117,7 @@ Goal: the booking rules in spec section 6 are implemented, covered by their test
     1. `BookingSuccessfulResponse.Status` is now `[JsonRequired]`. Without it, a body with no `status` would read as `false`, which is `Rejected` and falls through to the next target. Now it cannot be parsed, so it is `Unknown`.
     2. `status: true` with no `data.id` is `Succeeded` with no booking id, because spec section 5.2 makes `status` the authority.
     3. An HTTP 4xx keeps Picktime's `message`, read with `BookingUnsuccessfulResponse`. With no readable message, the message names the status code.
-    4. Only HTTP 401 and 403 raise `PicktimeAuthenticationException`. Plan section 4.2 also names "a token rejection message", but its shape is unknown until T13 captures one. T13 must add it if the token rejection is not a 401 or 403.
+    4. Only HTTP 401 and 403 raise `PicktimeAuthenticationException`. Plan section 4.2 also names "a token rejection message", but its shape is unknown until T13 captures one. T13 must add it if the token rejection is not a 401 or 403. T13 captured it on 2026-10-06: a rejected token returns HTTP 401, so nothing more is needed. Plan section 4.2 no longer names a token rejection message.
     5. The caller's own cancellation throws `OperationCanceledException`, even after the POST was sent. Approved by the owner on 2026-10-02.
     6. Review points left for later tasks: the full success model is deserialised strictly, so an unexpected type in `data` makes a real success `Unknown`. This is safe, because it can never cause a second booking. The raw body is not logged yet (T15). `PicktimeBookingService` still formats `start_date_time` with the current culture. T7 replaces that date code.
     7. The shared test settings moved to `TestSettings`, with the base URL `https://picktime.invalid/`. That domain never resolves, so a test built from the real registration cannot reach Picktime.
@@ -252,9 +252,11 @@ Goal: one real booking made from a local run, with the duplicate-booking protect
     - Plan section 2 lists any header setting that turned out to be required.
     - The code sends the `scantoken` header plus only the required headers.
   - Verify: the standard test command, and the Postman result recorded in spec section 5.4
-  - Notes: Do the Postman part early, before T5 and T6 if possible, so the API client is written against the real header set. The code change needs T6.
+  - Notes: Do the Postman part early, before T5 and T6 if possible, so the API client is written against the real header set. The code change needs T6. Evidence from the T13 captures on 2026-10-06, where every request sent only `scantoken`, `x-requested-with`, `referer` and `accept`, with no cookies and no `browserid`:
+    1. The availability read works with no cookies and no `browserid`. It also works with no `scantoken`, because the read does not check the token (spec section 5.3).
+    2. A booking reached the overlap check with no cookies and no `browserid`. It was rejected because the slot was taken, so this does not prove that a booking succeeds without them. T12 must still prove a successful booking.
 
-- [ ] **T13 — Capture rejected requests (manual)**
+- [x] **T13 — Capture rejected requests (manual)**
   - Refs: spec 5.2, spec 5.3, spec 7.2, plan 4.2, tests 24, 32
   - Depends on: T6
   - Done when:
@@ -262,7 +264,12 @@ Goal: one real booking made from a local run, with the duplicate-booking protect
     - A real token rejection is captured, from a request sent with a deliberately invalid `scantoken`. It is recorded in spec section 5.3.
     - The table in plan section 4.2 and the fixtures for tests 24 and 32 match them, and the "Provisional" note is removed.
   - Verify: the standard test command
-  - Notes: Do the Postman part early, before T5 and T6 if possible, so the fixtures need no rework.
+  - Notes: Do the Postman part early, before T5 and T6 if possible, so the fixtures need no rework. Done before T12, by the owner's choice, because T13 makes no bookings. The owner captured the requests in Postman on 2026-10-06. No request was sent from the code. Points to record:
+    1. The captures match the code, so no behaviour changed. A slot-taken rejection is HTTP 200 with `status: false`, which is `Rejected`. A rejected token is HTTP 401, which throws `PicktimeAuthenticationException`.
+    2. The availability read does not check the token. The handling of HTTP 401 and 403 on the read stays as a safeguard (plan sections 3 and 4.2). Plan section 5.5 records the residual risk that a bad token goes unnoticed on a run where no hour is free.
+    3. Test 24 and the HTTP 401 row of the booking test 32 use the captured status codes and bodies. The HTTP 403 rows, and the read test 32, keep their fixtures as safeguards, because nothing was captured for them. Every assertion is kept.
+    4. The slot-taken rejection was seen with the owner's own booking holding the slot. A slot held by someone else has not been seen.
+    5. Plan section 4.2 no longer names "a token rejection message", because the token rejection is an HTTP 401 (T6 note 4).
 
 - [ ] **T14 — Make one real booking from a local run (manual)**
   - Refs: spec 6.7, spec 9, plan 5.1
@@ -405,3 +412,4 @@ Goal: the automation is proved in production and left running.
 * 2026-10-05 — T9a — Book a late run inside the late-run window — branch `task/t9a-late-run-window`
 * 2026-10-05 — T10 — Retry the availability read only — branch `task/t10-retry-availability-read`
 * 2026-10-05 — T11 — Handle an unknown booking result — branch `task/t11-unknown-booking-result`
+* 2026-10-06 — T13 — Capture rejected requests — branch `task/t13-capture-rejections`

@@ -3,7 +3,7 @@
 > **What this document is for:** It answers *how will we build it?* It turns the requirements in `spec.md` into a technical design, and it is agreed before any code is written.
 
 Status: Approved
-Last updated: 2026-10-05
+Last updated: 2026-10-06
 
 This document is the record of design decisions for this project. It says how the requirements in spec.md are met, and why that way. It does not restate requirements: it refers to them by section, such as "spec section 6.2". It was split out of spec.md on 2026-09-29. Keep it updated as decisions change.
 
@@ -115,7 +115,7 @@ Two changes of note against the current code:
 1. `CreateBookingAsync` returns a parsed result rather than a raw `string`. Response parsing belongs with the client that knows the wire format, not in the booking rules. This moves `ParseBookingApiResponse` out of `PicktimeBookingService`.
 2. Both methods take a `CancellationToken`, which the Functions host supplies.
 
-**How `GetAvailableSlotsAsync` reports a failed read.** An empty list means the target is fully booked. A read that fails, after its retries, throws `PicktimeReadException`. That covers a network error, a timeout, any non-success HTTP status except 401 and 403, a body that cannot be parsed, or a body with `"status": false`. HTTP 401 and 403 throw `PicktimeAuthenticationException` instead (section 4.2). So a failed read can never be mistaken for a fully booked day, as spec section 6.4 requires. The booking service catches the exception, logs a warning naming the target, treats the target as having no free hours, and adds the target's name to `BookingSummary.FailedReads` (section 3.1). This matches how an authentication failure is reported, with `PicktimeAuthenticationException`.
+**How `GetAvailableSlotsAsync` reports a failed read.** An empty list means the target is fully booked. A read that fails, after its retries, throws `PicktimeReadException`. That covers a network error, a timeout, any non-success HTTP status except 401 and 403, a body that cannot be parsed, or a body with `"status": false`. HTTP 401 and 403 throw `PicktimeAuthenticationException` instead (section 4.2). In practice the read never returns them, because it does not check the token (spec section 5.3). The handling stays as a safeguard, in case Picktime starts to check it. So a failed read can never be mistaken for a fully booked day, as spec section 6.4 requires. The booking service catches the exception, logs a warning naming the target, treats the target as having no free hours, and adds the target's name to `BookingSummary.FailedReads` (section 3.1). This matches how an authentication failure is reported, with `PicktimeAuthenticationException`.
 
 The booking service treats any other exception from one read the same way, as a failed read. The only exceptions are `PicktimeAuthenticationException`, which stops the run (section 4.2), and the caller's cancellation, which is never caught. An unexpected error leaves the free slots just as unknown, and spec section 6.4 requires that one target that cannot be read does not stop the others from being used. Every read is left to finish before a rejected token stops the run, so `FailedReads` is complete.
 
@@ -310,11 +310,11 @@ An HTTP-triggered function must respond within 230 seconds, whatever `functionTi
 
 ### 4.2 Everything else
 
-**Provisional.** No real rejection has been captured yet (spec section 7.2). The `status: false` row assumes a slot-taken rejection has the failure shape in spec section 5.2. The authentication row assumes a rejected token returns HTTP 401 or 403. When real rejections are captured, update this table and the fixtures for tests 24 and 32 to match.
+The first two rows match the rejections captured on 2026-10-06. A rejected token returns HTTP 401 on a booking (spec section 5.3). A taken slot returns HTTP 200 with `status: false` (spec section 5.2). Tests 24 and 32 use the captured bodies. The availability read does not check the token, so in practice it never returns HTTP 401 or 403. Its handling stays as a safeguard. No HTTP 403 has been seen, and it is handled the same way as a safeguard.
 
 | Situation | Behaviour |
 | --- | --- |
-| HTTP 401 or 403, or a token rejection message | The API client throws `PicktimeAuthenticationException`, from either call, with no retry. The booking service catches it, stops the run, and sets the `AuthenticationFailed` verdict. Hours not yet finished record `Failed`, with authentication as the reason (section 3.1). An hour with an unknown booking result records `Unconfirmed` instead (section 4.1). Log at error level, naming authentication as the cause. This meets spec sections 5.3 and 6.4. |
+| HTTP 401 or 403 | The API client throws `PicktimeAuthenticationException`, from either call, with no retry. The booking service catches it, stops the run, and sets the `AuthenticationFailed` verdict. Hours not yet finished record `Failed`, with authentication as the reason (section 3.1). An hour with an unknown booking result records `Unconfirmed` instead (section 4.1). Log at error level, naming authentication as the cause. This meets spec sections 5.3 and 6.4. |
 | `status: false` — slot taken | No retry. Fall through to the next target, as spec section 6.4 requires. |
 | Malformed or empty body from the booking `POST` | The result is `Unknown`. Handle as section 4.1. Log the raw body at Warning level, cut to its first 1 KB. |
 | Malformed or empty body from the availability `GET` | The read has failed: throw `PicktimeReadException` (section 3). Log the raw body at Warning level, cut to its first 1 KB. |
@@ -429,6 +429,8 @@ Three things reduce it, and it is accepted rather than solved:
 1. Three missing emails on a shooting night is a noticeable signal in itself.
 2. An authentication failure logs at error level and names the cause, so the reason is immediate once anyone looks.
 3. The HTTP trigger checks the automation on demand, returning the summary as JSON without waiting for a scheduled run.
+
+One more gap is accepted: a bad token can go unnoticed on a run where no hour is free. The availability read does not check the token (spec section 5.3), so the token is checked only when a booking is tried. When every target is full, no booking is tried, and the run reports a normal result. The bad token shows on the next run that tries a booking.
 
 Adding a push or email alert later is a small change. An Azure Monitor alert on the query in section 5.4 would do it with no code at all, and is the natural first extension.
 

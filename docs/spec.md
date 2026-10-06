@@ -3,7 +3,7 @@
 > **What this document is for:** It answers *what are we building, and why?* It is the source of truth for requirements.
 
 Status: Approved
-Last updated: 2026-10-05
+Last updated: 2026-10-06
 
 This document is the record of requirements for this project. It says what must be true, not how it is achieved. Each fact is stated once. Keep it updated as requirements change.
 
@@ -208,7 +208,19 @@ Successful response:
 
 * `status: true` and `message: "Appointment fixed"` indicate success. Treat `status` as the authority and log the message.
 * `data.id` is the booking id. Log it, so a booking can be traced back to a run.
-A failure has `status: false` with an explanatory `message`.
+
+A failure has `status: false` with an explanatory `message`. A slot-taken rejection, captured on 2026-10-06, returns **HTTP 200** with this body:
+
+```json
+{
+  "status": false,
+  "message": "Another event or booking is overlapping with this time.",
+  "version": "1.0.0"
+}
+```
+
+* The HTTP status is 200, so `status` is the only sign of the rejection.
+* The slot was held by the owner's own manual booking. A slot held by someone else has not been seen.
 
 ### 5.3 Authentication
 
@@ -217,6 +229,20 @@ A `scantoken` header carries a JSON Web Token. Verified properties:
 * The payload contains `iss`, `accountId`, `userId` and `iat`. There is no `exp` claim.
 * `userId` is `null`, so it is an anonymous token issued to any visitor of the public booking page.
 * **Reuse is proven.** A token issued on 25 March 2026 was used on 28 September 2026 to create a real booking, which returned `200 OK` and `status: true`. The token is therefore long-lived across at least six months, and is not tied to a browser session.
+
+Captured on 2026-10-06:
+
+* A booking sent with an invalid `scantoken` returns **HTTP 401** with this body. The token is checked before the slot, because the same booking with a valid token reached the overlap check in section 5.2.
+
+  ```json
+  {
+    "status": false,
+    "message": "Auth token validation error",
+    "version": "1.0.0"
+  }
+  ```
+
+* The availability read does not check the token. It returned HTTP 200 and the normal success body in section 5.1 with a valid token, with an invalid token, and with no `scantoken` header. So a bad token shows only on a booking.
 
 Requirements that follow:
 
@@ -401,7 +427,7 @@ It uses the same code path as the timer, so manual and scheduled runs cannot beh
 
 ## 7. Remaining unknowns
 
-Both endpoints are now captured and a booking has been proven end to end, so nothing blocks implementation. Two small things are still to be pinned down, both cheaply, before the first real booking.
+Both endpoints are now captured and a booking has been proven end to end, so nothing blocks implementation. One small thing is still to be pinned down, cheaply, before the first real booking.
 
 ### 7.1 The minimum header set
 
@@ -415,7 +441,7 @@ Stop at the first step that fails, and keep whatever the last successful attempt
 
 ### 7.2 What a rejection looks like
 
-No rejected booking has been captured. Get one by posting a booking for a slot that is already taken — any slot that is already taken can serve as the test case, for example one booked by hand. Record the exact `status`, `message` and HTTP status code in section 5.2.
+Resolved on 2026-10-06. A slot-taken rejection and a token rejection were captured in Postman. They are recorded in sections 5.2 and 5.3.
 
 ---
 
