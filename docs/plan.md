@@ -3,7 +3,7 @@
 > **What this document is for:** It answers *how will we build it?* It turns the requirements in `spec.md` into a technical design, and it is agreed before any code is written.
 
 Status: Approved
-Last updated: 2026-10-06
+Last updated: 2026-10-07
 
 This document is the record of design decisions for this project. It says how the requirements in spec.md are met, and why that way. It does not restate requirements: it refers to them by section, such as "spec section 6.2". It was split out of spec.md on 2026-09-29. Keep it updated as decisions change.
 
@@ -300,7 +300,7 @@ That turns an unsafe retry into a safe one, using the availability endpoint we a
 
 | Timeout | Value | Reason |
 | --- | --- | --- |
-| Booking `POST` | 20 seconds | About 5 times the measured 3.64 seconds, so a slow booking that succeeds is not wrongly marked `Unknown`. Short enough that a hung request does not stall the run. `HttpClient`'s default of 100 seconds is not used. |
+| Booking `POST` | 20 seconds | About 5 times the measured 3.64 seconds, so a slow booking that succeeds is not wrongly marked `Unknown`. Short enough that a hung request does not stall the run. `HttpClient`'s default of 100 seconds is not used. Confirmed on 2026-10-07 by the first real booking from the code. The whole manual run, one availability read plus the booking, took 7.58 seconds, so the booking took at most that. The Postman bookings in spec section 5.4 took 6.28 and 6.69 seconds. 20 seconds is still more than 2.5 times the slowest of these. |
 | Availability `GET` | The standard resilience handler defaults: 10 seconds per attempt, 30 seconds in total. Also a 35-second `Timeout` on the read client. | Reads are quick and safe to repeat, and the handler defaults suit them. The handler returns when the response headers arrive, so it does not limit the body download. The handler also sets the client's own `Timeout` to infinite, so without this setting a stalled body can hold a read until the function timeout. The setting is applied after the handler is added, so the handler does not overwrite it. The client timeout counts from the start of the request, retries included. At 35 seconds, just above the handler's 30, the handler still stops a normal timeout first, and the client timeout stops only a stalled body. Decided by the owner on 2026-10-06. |
 | Whole run | `functionTimeout` of 10 minutes in `host.json` | The Consumption plan defaults to 5 minutes, with a maximum of 10 (checked on 2026-09-30). Worst case, with every call timing out, is 35 seconds of reads, which run concurrently, plus, for each of 3 hours, two attempts and one re-read (75 seconds): about 4.5 minutes. 10 minutes leaves room for a cold start. |
 
