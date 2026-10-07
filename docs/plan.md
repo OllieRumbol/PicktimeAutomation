@@ -358,11 +358,11 @@ Application Insights stays within its free allowance. See section 8.3.
 | Where | Setting |
 | --- | --- |
 | Packages | `Microsoft.Azure.Functions.Worker.OpenTelemetry` and `Azure.Monitor.OpenTelemetry.Exporter` |
-| `Program.cs` | `AddOpenTelemetry().UseFunctionsWorkerDefaults().UseAzureMonitorExporter()`. Register the exporter only when `APPLICATIONINSIGHTS_CONNECTION_STRING` is set, so local runs work without Azure. |
+| `Program.cs` | `AddOpenTelemetry().UseFunctionsWorkerDefaults().UseAzureMonitorExporter()`, in one extension method that `Program.cs` calls, so a test can read the exporter's options. Register the exporter only when `APPLICATIONINSIGHTS_CONNECTION_STRING` is set, so local runs work without Azure. Give the exporter a fixed 100% sampling rate (`SamplingRatio = 1.0f` and `TracesPerSecond = null`), and turn off its trace-based log sampler (`EnableTraceBasedLogsSampler = false`), so no log depends on a trace sampling decision. |
 | `host.json` | `"telemetryMode": "OpenTelemetry"`. In this mode the `logging.applicationInsights` section, including `samplingSettings`, does not apply (Microsoft Learn, "Use OpenTelemetry with Azure Functions", checked on 2026-10-06). So that setting no longer fixes defect 9 in spec section 4.1. Still set `samplingSettings.isEnabled` to `false`, so sampling stays off if the mode is ever removed. `functionTimeout` is set here too (section 4.1). |
 | `appsettings.json` | Worker log levels: `Default` at `Information`, `Microsoft` at `Warning`. Worker log levels are set here, not in `host.json`. |
 
-Defect 9 is fixed because no sampling is configured, in the host or in the worker. Sampling is designed for high volume, and at three runs a week there is nothing to gain from it. Whether the exporter samples by default was not confirmed, so the first run in Azure is checked: the section 5.4 query must return it with every column filled.
+Defect 9 is fixed because nothing is sampled out, in the host or in the worker. Sampling is designed for high volume, and at three runs a week there is nothing to gain from it. The exporter samples by default: from version 1.6.0 it keeps at most 5 traces per second, and from 1.5.0 a log can be dropped with its trace (the exporter's changelog, checked on 2026-10-07). So the worker replaces that default with a fixed 100% rate, as the changelog describes, and turns off the log sampler, so logs are kept even if a sampler is set later through the `OTEL_TRACES_SAMPLER` settings. A test checks the settings. The first run in Azure is still checked: the section 5.4 query must return it with every column filled.
 
 The libraries are free and open source. The logs go to the same Application Insights resource, within the same free allowance (section 8.3), so this choice adds no cost.
 
@@ -451,7 +451,7 @@ Adding a push or email alert later is a small change. An Azure Monitor alert on 
 | Deployment credentials | GitHub Actions signs in to Azure with OpenID Connect (section 8.4). No deployment secret is stored in GitHub, and SCM basic authentication stays off on the Function App. A publish profile was rejected: Microsoft marks it "not recommended", and it needs basic authentication switched on, which Microsoft says makes the app less secure (checked on 2026-09-30). |
 | HTTP test trigger | A function key gives the protection required by spec section 6.7. The key is sent in the `x-functions-key` header, not the URL, so it does not appear in browser history or logs of URLs. |
 | HTTPS | HTTPS Only is on for the Function App, so the function key is never sent unencrypted. |
-| Logging the token | Check at code review that the `scantoken` is never logged. Not covered by a test — see section 7.6 for why. |
+| Logging the token | Check at code review that the `scantoken` is never logged. One narrow test covers the logs on the API path — see section 7.6. |
 
 ---
 
@@ -542,7 +542,7 @@ Use a stub `HttpMessageHandler`. These are worth writing despite looking like wi
 | 32 | An HTTP 401 or 403 from either call raises `PicktimeAuthenticationException`, and the request is not retried | A token rejection treated as a normal failure, or retried |
 | 33 | Built from the real `AddPicktimeServices` registration, with a stub handler. With HTTP 503: the booking `POST` reaches the handler exactly once, and the availability `GET` reaches it 4 times (the first try plus 3 retries). With HTTP 401: the availability `GET` reaches it exactly once. The test sets the retry backoff to zero, so it runs quickly; it checks the number of calls, not the timing. | A retry policy added to the booking client, which can book the same slot twice, or one that retries a rejected token |
 
-Not tested: that the token is never written to a log. Asserting the absence of a value across arbitrary log calls is brittle and proves little. It is a code review point in section 6 instead.
+That the token is never written to a log is a code review point in section 6. Asserting the absence of a value across arbitrary log calls is brittle and proves little. One narrow test is kept: built from the real `AddPicktimeServices` registration, which sets the header, it runs a malformed read, a malformed booking body and a rejected token, and checks that no log record holds the token. Added on 2026-10-07, at the owner's request (T15).
 
 ### 7.7 Function triggers — `PicktimeAutomation.AzureFunctionsTests`
 

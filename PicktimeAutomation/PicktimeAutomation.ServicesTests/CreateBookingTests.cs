@@ -1,5 +1,8 @@
 using System.Net;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging.Testing;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using PicktimeAutomation.Models;
@@ -219,6 +222,53 @@ public sealed class CreateBookingTests
         Assert.AreEqual(BookingResultStatus.Unknown, result.Status);
     }
 
+    // Plan section 4.2: the raw body is what makes an Unknown result possible to diagnose.
+    [TestMethod]
+    [DataRow("{ \"status\": true, \"data\": { \"id\": ", DisplayName = "Malformed JSON")]
+    [DataRow("", DisplayName = "Empty body")]
+    [DataRow("null", DisplayName = "JSON null")]
+    [DataRow("{}", DisplayName = "No status")]
+    public async Task CreateBookingAsync_BodyIsUnreadable_LogsTheBodyAtWarning(string body)
+    {
+        var logger = new FakeLogger<PicktimeApiService>();
+        var service = CreateService(StubHttpMessageHandler.Returning(HttpStatusCode.OK, body), logger: logger);
+
+        await service.CreateBookingAsync(Request, CancellationToken.None);
+
+        var record = logger.Collector.GetSnapshot().Single();
+        Assert.AreEqual(LogLevel.Warning, record.Level);
+        Assert.AreEqual(body, record.GetStructuredStateValue("ResponseBody") ?? string.Empty);
+    }
+
+    // Plan section 4.2: the logged body is cut to its first 1 KB.
+    [TestMethod]
+    public async Task CreateBookingAsync_LongUnreadableBody_LogsOnlyTheFirstKilobyte()
+    {
+        var body = "<html>" + new string('x', 3000) + "</html>";
+        var logger = new FakeLogger<PicktimeApiService>();
+        var service = CreateService(StubHttpMessageHandler.Returning(HttpStatusCode.OK, body), logger: logger);
+
+        await service.CreateBookingAsync(Request, CancellationToken.None);
+
+        var record = logger.Collector.GetSnapshot().Single();
+        Assert.AreEqual(body[..1024], record.GetStructuredStateValue("ResponseBody"));
+        Assert.AreEqual(body.Length.ToString(), record.GetStructuredStateValue("BodyLength"));
+    }
+
+    // A readable answer, even a rejection, logs no body.
+    [TestMethod]
+    public async Task CreateBookingAsync_BodyIsReadable_LogsNothing()
+    {
+        var logger = new FakeLogger<PicktimeApiService>();
+        var service = CreateService(
+            StubHttpMessageHandler.Returning(HttpStatusCode.OK, """{"status": false, "message": "Another event or booking is overlapping with this time."}"""),
+            logger: logger);
+
+        await service.CreateBookingAsync(Request, CancellationToken.None);
+
+        Assert.AreEqual(0, logger.Collector.Count);
+    }
+
     // Test 30: a timeout.
     [TestMethod]
     public async Task CreateBookingAsync_HttpClientTimesOut_ReturnsUnknown()
@@ -264,7 +314,10 @@ public sealed class CreateBookingTests
             () => service.CreateBookingAsync(Request, cancellation.Token));
     }
 
-    private static PicktimeApiService CreateService(StubHttpMessageHandler handler, TimeSpan? timeout = null)
+    private static PicktimeApiService CreateService(
+        StubHttpMessageHandler handler,
+        TimeSpan? timeout = null,
+        ILogger<PicktimeApiService>? logger = null)
     {
         var httpClient = new HttpClient(handler)
         {
@@ -293,6 +346,7 @@ public sealed class CreateBookingTests
             bookingClient: httpClient,
             picktimeOptions,
             archerOptions,
-            new FakeTimeProvider());
+            new FakeTimeProvider(),
+            logger ?? NullLogger<PicktimeApiService>.Instance);
     }
 }

@@ -37,11 +37,20 @@ public class PicktimeBookingService : IPicktimeBookingService
 
     public async Task<BookingSummary> BookArcheryIndoorTargetAsync(DateOnly? bookingDate = null, CancellationToken ct = default)
     {
-        var date = bookingDate ?? _londonClock.Today().AddDays(_bookingOptions.DaysAhead);
+        var date = bookingDate ?? DefaultBookingDate();
 
         // The gate is on the booking date, not the run date, so the last run in September books 1 October (spec section 6.3).
-        if (!SeasonGate.IsInSeason(date, _bookingOptions.SeasonStart, _bookingOptions.SeasonEnd))
+        var inSeason = SeasonGate.IsInSeason(date, _bookingOptions.SeasonStart, _bookingOptions.SeasonEnd);
+        LogRunStart(date, bookingDateSupplied: bookingDate is not null, inSeason);
+
+        if (!inSeason)
         {
+            _logger.LogInformation(
+                "The run is skipped. The booking date {BookingDate} is outside the season, {SeasonStart} to {SeasonEnd} (MM-dd). Nothing is booked.",
+                IsoFormat.Date(date),
+                _bookingOptions.SeasonStart,
+                _bookingOptions.SeasonEnd);
+
             return new BookingSummary { BookingDate = date, Verdict = RunVerdict.Skipped };
         }
 
@@ -55,9 +64,7 @@ public class PicktimeBookingService : IPicktimeBookingService
 
         if (readAuthenticationFailure is not null)
         {
-            RecordUnfinishedHoursAsFailed(attempts, readAuthenticationFailure);
-
-            return CreateSummary(date, attempts, availability, RunVerdict.AuthenticationFailed);
+            return StopForRejectedToken(date, attempts, availability, readAuthenticationFailure);
         }
 
         try
@@ -83,6 +90,28 @@ public class PicktimeBookingService : IPicktimeBookingService
         return CreateSummary(date, attempts, availability, DecideVerdict(attempts));
     }
 
+    public DateOnly DefaultBookingDate()
+    {
+        return _londonClock.Today().AddDays(_bookingOptions.DaysAhead);
+    }
+
+    /// <summary>
+    /// The first line of every run that reaches the service. The UTC time, the London time and the booking date
+    /// make a wrong-day booking visible at once (spec section 6.2), and the season result shows why a run books nothing (spec section 6.3).
+    /// </summary>
+    private void LogRunStart(DateOnly date, bool bookingDateSupplied, bool inSeason)
+    {
+        var londonNow = _londonClock.NowWithOffset();
+
+        _logger.LogInformation(
+            "Booking run started. UtcNow={UtcNow} LondonNow={LondonNow} BookingDate={BookingDate} BookingDateSupplied={BookingDateSupplied} InSeason={InSeason}",
+            IsoFormat.TimeWithOffset(londonNow.ToUniversalTime()),
+            IsoFormat.TimeWithOffset(londonNow),
+            IsoFormat.Date(date),
+            bookingDateSupplied,
+            inSeason);
+    }
+
     /// <summary>
     /// Reads every target concurrently. A failed read leaves that target with no free hours,
     /// so one unreachable target never stops the others from being used (spec section 6.4).
@@ -103,6 +132,7 @@ public class PicktimeBookingService : IPicktimeBookingService
         try
         {
             var freeSlots = await _api.GetAvailableSlotsAsync(target.ResourceId, date, ct);
+            LogAvailability(target, date, freeSlots);
 
             return new TargetAvailability(target, freeSlots);
         }
@@ -118,10 +148,27 @@ public class PicktimeBookingService : IPicktimeBookingService
                 exception,
                 "The availability read for target {TargetName} on {BookingDate} failed. The target is treated as fully booked.",
                 target.Name,
-                date);
+                IsoFormat.Date(date));
 
             return new TargetAvailability(target, [], ReadFailed: true);
         }
+    }
+
+    /// <summary>
+    /// Logs the configured hours that are free, and how many slots Picktime returned for the whole day.
+    /// </summary>
+    private void LogAvailability(BookingTargetOptions target, DateOnly date, IReadOnlyList<long> freeSlots)
+    {
+        var freeHours = _bookingOptions.Hours
+            .Where(hour => freeSlots.Contains(PicktimeTimestamp.ToNumber(date, hour)))
+            .ToList();
+
+        _logger.LogInformation(
+            "Availability for target {TargetName} on {BookingDate}. FreeHours=[{FreeHours}] FreeSlotCount={FreeSlotCount}",
+            target.Name,
+            IsoFormat.Date(date),
+            string.Join(",", freeHours),
+            freeSlots.Count);
     }
 
     /// <summary>
@@ -141,6 +188,13 @@ public class PicktimeBookingService : IPicktimeBookingService
         }
         catch (Exception exception) when (!IsRejectedToken(exception) && !IsCallerCancellation(exception, ct))
         {
+            // The summary keeps only the message, so the exception itself is logged here (plan section 5.3).
+            _logger.LogError(
+                exception,
+                "The booking for {Hour}:00 on {BookingDate} failed with an unexpected error. The hour records Failed, and the other hours carry on.",
+                hour,
+                IsoFormat.Date(date));
+
             return new BookingAttempt { Hour = hour, Outcome = BookingOutcome.Failed, ErrorMessage = exception.Message };
         }
     }
@@ -168,6 +222,7 @@ public class PicktimeBookingService : IPicktimeBookingService
         foreach (var target in freeTargets)
         {
             var result = await _api.CreateBookingAsync(new BookingRequest(slot, target.ResourceId), ct);
+            LogBookingResult(date, hour, target, result);
 
             switch (result.Status)
             {
@@ -243,6 +298,7 @@ public class PicktimeBookingService : IPicktimeBookingService
         }
 
         var result = await _api.CreateBookingAsync(new BookingRequest(slot, target.ResourceId), ct);
+        LogBookingResult(date, hour, target, result);
 
         switch (result.Status)
         {
@@ -261,6 +317,23 @@ public class PicktimeBookingService : IPicktimeBookingService
         }
     }
 
+    /// <summary>
+    /// One line per booking request, with Picktime's own answer. <c>booking_email_confirmation</c> shows whether
+    /// Picktime meant to send the confirmation email (plan section 5.1).
+    /// </summary>
+    private void LogBookingResult(DateOnly date, int hour, BookingTargetOptions target, BookingResult result)
+    {
+        _logger.LogInformation(
+            "Booking request for {Hour}:00 on {BookingDate} on target {TargetName} returned {BookingResult}. BookingId={BookingId} BookingEmailConfirmation={BookingEmailConfirmation} ApiMessage={ApiMessage}",
+            hour,
+            IsoFormat.Date(date),
+            target.Name,
+            result.Status,
+            result.BookingId,
+            result.EmailConfirmationSent,
+            result.Message);
+    }
+
     private static BookingAttempt CreateBookedAttempt(int hour, BookingTargetOptions target, BookingResult result)
     {
         return new BookingAttempt { Hour = hour, Outcome = BookingOutcome.Booked, TargetName = target.Name, BookingId = result.BookingId };
@@ -272,7 +345,7 @@ public class PicktimeBookingService : IPicktimeBookingService
             exception,
             "The booking for {Hour}:00 on {BookingDate} on target {TargetName} is unconfirmed. No other target is tried for this hour. {Reason}",
             hour,
-            date,
+            IsoFormat.Date(date),
             target.Name,
             reason);
 
@@ -281,6 +354,7 @@ public class PicktimeBookingService : IPicktimeBookingService
 
     /// <summary>
     /// Every further request would be rejected too, so the run stops here (spec section 6.4).
+    /// Every rejected token reaches this method, so this is the one place it is logged at error level (plan section 4.2).
     /// </summary>
     private BookingSummary StopForRejectedToken(
         DateOnly date,
@@ -288,6 +362,12 @@ public class PicktimeBookingService : IPicktimeBookingService
         IReadOnlyList<TargetAvailability> availability,
         PicktimeAuthenticationException exception)
     {
+        // The exception message names the HTTP status only. The token itself is never logged.
+        _logger.LogError(
+            exception,
+            "Authentication failed: Picktime rejected the scantoken. The run on {BookingDate} stops, and the hours not yet finished record Failed. Check Picktime:ScanToken.",
+            IsoFormat.Date(date));
+
         RecordUnfinishedHoursAsFailed(attempts, exception);
 
         return CreateSummary(date, attempts, availability, RunVerdict.AuthenticationFailed);

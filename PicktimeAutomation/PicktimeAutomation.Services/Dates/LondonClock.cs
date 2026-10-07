@@ -34,8 +34,14 @@ public sealed class LondonClock
     /// </summary>
     public DateTime Now()
     {
-        var londonNow = TimeZoneInfo.ConvertTime(_timeProvider.GetUtcNow(), _londonTimeZone);
+        return NowWithOffset().DateTime;
+    }
 
-        return londonNow.DateTime;
+    /// <summary>
+    /// The London time with its offset from UTC, so one value gives both times that every run logs (spec section 6.2).
+    /// </summary>
+    public DateTimeOffset NowWithOffset()
+    {
+        return TimeZoneInfo.ConvertTime(_timeProvider.GetUtcNow(), _londonTimeZone);
     }
 }

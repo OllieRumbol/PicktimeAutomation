@@ -3,6 +3,7 @@ using System.Text;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Http.Resilience;
+using Microsoft.Extensions.Logging.Testing;
 using PicktimeAutomation.Models;
 using PicktimeAutomation.Services;
 using PicktimeAutomation.Services.Exceptions;
@@ -224,6 +225,60 @@ public sealed class PicktimeApiRegistrationTests
         Assert.AreEqual(TimeSpan.FromSeconds(35), readClient.Timeout);
     }
 
+    // Plan section 6: the scantoken is never logged. The token is set in this registration, so the test runs the
+    // real booking service on it, through every new log on the API path: a malformed read, a malformed booking body,
+    // and a rejected token with its error. A check across every log call stays a review point (plan section 7.6).
+    [TestMethod]
+    public async Task BookingRun_MalformedBodiesAndRejectedToken_NeverLogTheScanToken()
+    {
+        const string ScanToken = "fake-scan-token";
+        const string AllHoursFree = """{ "status": true, "message": "Success", "data": [202610131700, 202610131800, 202610131900] }""";
+        var readIsMalformed = true;
+        var bookingCount = 0;
+        var handler = new StubHttpMessageHandler((request, _) =>
+        {
+            HttpResponseMessage response;
+            if (request.Method == HttpMethod.Get)
+            {
+                response = new HttpResponseMessage(HttpStatusCode.OK) { Content = Json(readIsMalformed ? "<html>Busy</html>" : AllHoursFree) };
+            }
+            else
+            {
+                // The first booking body is malformed, so the result is unknown. The second attempt's token is rejected.
+                bookingCount++;
+                response = bookingCount == 1
+                    ? new HttpResponseMessage(HttpStatusCode.OK) { Content = Json("<html>OK</html>") }
+                    : new HttpResponseMessage(HttpStatusCode.Unauthorized) { Content = Json(TokenRejectedResponse) };
+            }
+
+            return Task.FromResult(response);
+        });
+        using var provider = BuildProvider(handler);
+        var bookingService = provider.GetRequiredService<IPicktimeBookingService>();
+
+        await bookingService.BookArcheryIndoorTargetAsync(BookingDate, CancellationToken.None);
+        readIsMalformed = false;
+        var summary = await bookingService.BookArcheryIndoorTargetAsync(BookingDate, CancellationToken.None);
+
+        var records = provider.GetFakeLogCollector().GetSnapshot();
+        Assert.AreEqual(RunVerdict.AuthenticationFailed, summary.Verdict);
+        Assert.AreEqual(3, records.Count(record => record.GetStructuredStateValue("ResponseBody") is not null), "malformed body warnings");
+        Assert.IsTrue(records.Any(record => record.Level == Microsoft.Extensions.Logging.LogLevel.Error), "authentication error");
+
+        foreach (var record in records)
+        {
+            var loggedText = string.Join(
+                " ",
+                [record.Message, record.Exception?.ToString(), .. (record.StructuredState ?? []).Select(property => property.Value)]);
+            Assert.DoesNotContain(ScanToken, loggedText, $"Log record: {record.Message}");
+        }
+    }
+
+    private static StringContent Json(string body)
+    {
+        return new StringContent(body, Encoding.UTF8, "application/json");
+    }
+
     private static ServiceProvider BuildProvider(
         StubHttpMessageHandler handler,
         Action<HttpStandardResilienceOptions>? configureResilience = null)
@@ -234,6 +289,9 @@ public sealed class PicktimeApiRegistrationTests
 
         var services = new ServiceCollection();
         services.AddPicktimeServices(configuration);
+
+        // The Functions host provides logging. Fake logging lets a test read every log record.
+        services.AddFakeLogging();
         services.ConfigureHttpClientDefaults(builder => builder.ConfigurePrimaryHttpMessageHandler(() => handler));
 
         // No backoff between retries, so the tests run quickly. They count the calls, not the timing.

@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Http.Resilience;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using PicktimeAutomation.Models;
 using PicktimeAutomation.Services.Dates;
@@ -94,7 +95,8 @@ public static class ServiceCollectionExtensions
                 bookingClient: httpClientFactory.CreateClient(BookingClientName),
                 serviceProvider.GetRequiredService<IOptions<PicktimeOptions>>(),
                 serviceProvider.GetRequiredService<IOptions<ArcherOptions>>(),
-                serviceProvider.GetRequiredService<TimeProvider>());
+                serviceProvider.GetRequiredService<TimeProvider>(),
+                serviceProvider.GetRequiredService<ILogger<PicktimeApiService>>());
         });
     }
 
