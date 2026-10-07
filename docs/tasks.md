@@ -2,7 +2,7 @@
 
 > **What this document is for:** It answers *what do we do next?* It splits the approved design into small, verifiable steps and tracks progress against them.
 
-Last updated: 2026-10-06
+Last updated: 2026-10-07
 
 <!--
 How to use this file
@@ -277,8 +277,8 @@ Goal: one real booking made from a local run, with the duplicate-booking protect
     3. The code already matched: the booking client sends only `scantoken`, the body is `application/json; charset=utf-8`, and the save URL has no cache-buster. No production code changed.
     4. Plan section 2 now says no header setting is required, and the `Picktime:BrowserId` and `Picktime:Referer` rows are removed (T3 note 2).
     5. A new test in `PicktimeApiRegistrationTests` checks that a booking sends no header other than `scantoken`, with that content type. A check by mutation: adding `x-requested-with` to the client fails it.
-    6. Left for T14: Postman always sends `Cache-Control` and `Postman-Token`, so a booking without them is not yet proven. Every captured read also sent `x-requested-with`, `referer` and `accept`, so a read with only `scantoken` is not yet proven either. T14 books from the real code, which sends none of these headers, so it confirms both. Spec section 5.4 records both caveats.
-    7. The booking took about 6.3 to 6.7 seconds, against the 20-second timeout in plan section 4.1, which was set from a measured 3.64 seconds. Plan section 4.1 is not changed in this task.
+    6. Left for T14: Postman always sends `Cache-Control` and `Postman-Token`, so a booking without them is not yet proven. Every captured read also sent `x-requested-with`, `referer` and `accept`, so a read with only `scantoken` is not yet proven either. T14 books from the real code, which sends none of these headers, so it confirms both. Spec section 5.4 records both caveats. Resolved by T14 on 2026-10-07 (T14 note 5).
+    7. The booking took about 6.3 to 6.7 seconds, against the 20-second timeout in plan section 4.1, which was set from a measured 3.64 seconds. Plan section 4.1 is not changed in this task. Resolved by T14 on 2026-10-07: the timeout is confirmed (T14 note 6).
 
 - [x] **T13 — Capture rejected requests (manual)**
   - Refs: spec 5.2, spec 5.3, spec 7.2, plan 4.2, tests 24, 32
@@ -295,7 +295,7 @@ Goal: one real booking made from a local run, with the duplicate-booking protect
     4. The slot-taken rejection was seen with the owner's own booking holding the slot. A slot held by someone else has not been seen.
     5. Plan section 4.2 no longer names "a token rejection message", because the token rejection is an HTTP 401 (T6 note 4).
 
-- [ ] **T14 — Make one real booking from a local run (manual)**
+- [x] **T14 — Make one real booking from a local run (manual)**
   - Refs: spec 5.4, spec 6.7, spec 9, plan 4.1, plan 5.1
   - Depends on: T9, T10, T11, T12, T13
   - Done when:
@@ -309,6 +309,16 @@ Goal: one real booking made from a local run, with the duplicate-booking protect
     1. Added on 2026-10-06, from the `/review-plan` findings G6 and G7, with the owner's approval. T12 left both caveats and the booking time for this task (T12 notes 6 and 7).
     2. No log line holds the booking's duration until T15. With one hour configured, the HTTP trigger's total response time is the read plus the booking, so record it as an upper bound.
     3. If the read or the booking fails for a reason other than a taken slot, stop. Do not add a header to make it work. Treat it as a change to spec section 5.4, and get approval first.
+
+    Result, 2026-10-07. The owner made one real booking from a local run, at about 10:15 London time. Claude sent no request: it recorded the result in the documents only. Booking ids are redacted here. Points to record:
+    1. Setup. Azurite, then `func start` from `PicktimeAutomation.AzureFunctions`. The output showed "Function TargetBookingFunction is disabled" and listed `ManualBookingFunction` at `[POST] http://localhost:7071/api/book`. `local.settings.json` set only `Booking:Hours:0` = 17 for the run. Hours 18 and 19 were restored afterwards.
+    2. Request: `curl.exe -s -X POST -d "{}" -w "Total time: %{time_total}s" "http://localhost:7071/api/book?bookingDate=2026-10-07"`.
+    3. Response: `{"bookingDate":"2026-10-07","attempts":[{"hour":17,"outcome":"Booked","targetName":"2b","bookingId":"<id>","errorMessage":null}],"failedReads":[],"verdict":"Success","bookedCount":1,"noAvailabilityCount":0,"failedCount":0,"unconfirmedCount":0}`.
+    4. Checks. The slot then showed as taken on the Picktime site. The confirmation email arrived, and the owner checked that its details are correct. The owner kept the booking, because they are shooting that evening, so it was not cancelled.
+    5. Headers. The code sends only `scantoken` on the read, and only `scantoken` and `content-type` on the booking (the test from T12 note 5 checks the booking). It sends no `Cache-Control` and no `Postman-Token`. Both caveats in spec section 5.4 are resolved there.
+    6. Time. The whole HTTP call took 7.58 seconds: the availability read plus the booking. This is an upper bound for the booking from the code. The T12 Postman bookings took 6.28 and 6.69 seconds. The 20-second booking timeout in plan section 4.1 is confirmed, not changed, so plan sections 3.4 and 8.3 are not changed either.
+    7. An observation, not changed in this task. Plan section 3.4 estimates a full run at about 20 seconds from the measured 3.64-second booking. At about 6 to 7.5 seconds per booking, three sequential bookings take about 20 seconds alone, so a full run with a cold start may take nearer 30 seconds. This does not affect the timeout. The usage in plan section 8.3 stays negligible against the free grant. T15's logged durations can settle the figure.
+    8. No code or test changed. Spec section 9 is not changed: its real-booking item needs a run in Azure (T19).
 
 ## Phase 4 — Logging
 
@@ -464,3 +474,4 @@ Goal: the automation is proved in production and left running.
 * 2026-10-06 — T13 — Capture rejected requests — branch `task/t13-capture-rejections`
 * 2026-10-06 — T12 — Find the minimum header set — branch `task/t12-minimum-headers`
 * 2026-10-06 — T10a — Bound the read client's timeout — branch `task/t12-minimum-headers`
+* 2026-10-07 — T14 — Make one real booking from a local run — branch `task/t14-local-booking`

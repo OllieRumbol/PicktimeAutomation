@@ -3,7 +3,7 @@
 > **What this document is for:** It answers *what are we building, and why?* It is the source of truth for requirements.
 
 Status: Approved
-Last updated: 2026-10-06
+Last updated: 2026-10-07
 
 This document is the record of requirements for this project. It says what must be true, not how it is achieved. Each fact is stated once. Keep it updated as requirements change.
 
@@ -264,9 +264,9 @@ The site's own requests send `browserid`, `x-requested-with: XMLHttpRequest`, a 
 
 In both, no cookies were sent: the Postman cookie jar was empty, and the response set no cookies. No `browserid`, `x-requested-with`, `referer`, `accept` or `user-agent` was needed.
 
-One caveat. Postman always sends `Cache-Control: no-cache` and a `Postman-Token`, and neither can be removed. So the bookings above do not prove that a request without them succeeds. The first real booking from the code, which sends neither, confirms it.
+Postman always sends `Cache-Control: no-cache` and a `Postman-Token`, and neither can be removed. So the bookings above did not prove that a request without them succeeds. Resolved on 2026-10-07 by a real booking from a local run of the code. The code sends only `scantoken` and `content-type` on the booking, with no `Cache-Control` and no `Postman-Token`. The booking returned `Booked` with a booking id, showed on the Picktime site, and the confirmation email arrived.
 
-The availability read does not need `scantoken`, cookies or `browserid` (section 5.3). Every captured read also sent `x-requested-with`, `referer` and `accept`, so a read without them has not been seen. The first real run from the code, which sends only `scantoken` on the read too, confirms it.
+The availability read does not need `scantoken`, cookies or `browserid` (section 5.3). Every captured read also sent `x-requested-with`, `referer` and `accept`, so a read without them had not been seen. Resolved by the same run on 2026-10-07. The code sends only `scantoken` on the read, and the read succeeded: it found the free hour that the run then booked.
 
 ---
 
