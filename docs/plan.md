@@ -3,7 +3,7 @@
 > **What this document is for:** It answers *how will we build it?* It turns the requirements in `spec.md` into a technical design, and it is agreed before any code is written.
 
 Status: Approved
-Last updated: 2026-10-07
+Last updated: 2026-10-08
 
 This document is the record of design decisions for this project. It says how the requirements in spec.md are met, and why that way. It does not restate requirements: it refers to them by section, such as "spec section 6.2". It was split out of spec.md on 2026-09-29. Keep it updated as decisions change.
 
