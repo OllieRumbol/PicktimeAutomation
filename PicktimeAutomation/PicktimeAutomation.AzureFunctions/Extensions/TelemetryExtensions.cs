@@ -6,8 +6,10 @@ using Microsoft.Extensions.DependencyInjection;
 namespace PicktimeAutomation.AzureFunctions.Extensions;
 
 /// <summary>
-/// The worker sends its logs to Application Insights directly through OpenTelemetry, so named placeholders
-/// reach customDimensions (plan section 5.2).
+/// In Azure, the worker sends its logs to Application Insights directly through OpenTelemetry, so named placeholders
+/// reach customDimensions (plan section 5.2). Locally, with no connection string, the worker relays its logs
+/// through the host, which prints them in the func start console. A local run with the connection string set
+/// sends its logs to Application Insights only, and the console shows none.
 /// </summary>
 public static class TelemetryExtensions
 {
@@ -18,12 +20,14 @@ public static class TelemetryExtensions
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configuration);
 
-        var openTelemetry = services.AddOpenTelemetry().UseFunctionsWorkerDefaults();
-
-        // Only when the connection string is set, so a local run works without Azure.
+        // Only when the connection string is set, so a local run works without Azure. UseFunctionsWorkerDefaults
+        // tells the host to stop relaying the worker's logs, so it is only used together with the exporter.
+        // Without the exporter, the logs would go nowhere.
         if (!string.IsNullOrWhiteSpace(configuration[ApplicationInsightsConnectionStringSettingName]))
         {
-            openTelemetry.UseAzureMonitorExporter(KeepEveryLog);
+            services.AddOpenTelemetry()
+                .UseFunctionsWorkerDefaults()
+                .UseAzureMonitorExporter(KeepEveryLog);
         }
 
         return services;

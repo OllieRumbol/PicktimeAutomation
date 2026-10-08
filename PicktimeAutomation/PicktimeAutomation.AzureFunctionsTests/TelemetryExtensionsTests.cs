@@ -1,4 +1,5 @@
 using Azure.Monitor.OpenTelemetry.Exporter;
+using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -7,14 +8,20 @@ using PicktimeAutomation.AzureFunctions.Extensions;
 namespace PicktimeAutomation.AzureFunctionsTests;
 
 /// <summary>
-/// Plan section 5.2: the worker keeps every log, so no run's logs are sampled out (spec section 4.1, defect 9).
-/// The tests read the exporter's options. They build no exporter and send nothing.
+/// Plan section 5.2: in Azure the worker exports its own logs and keeps every one (spec section 4.1, defect 9).
+/// Locally it relays them through the host, so they show in the func start console.
+/// The tests read the options. They build no exporter and send nothing.
 /// </summary>
 [TestClass]
 public sealed class TelemetryExtensionsTests
 {
     // Invented, in the connection string's shape. It is never used to send anything.
     private const string FakeConnectionString = "InstrumentationKey=fake-key;IngestionEndpoint=https://telemetry.invalid/";
+
+    // The two capabilities the worker sends the host. When they are set, the host stops relaying the worker's logs
+    // (Microsoft.Azure.Functions.Worker.OpenTelemetry, UseFunctionsWorkerDefaults).
+    private const string WorkerOpenTelemetryCapability = "WorkerOpenTelemetryEnabled";
+    private const string WorkerOpenTelemetrySchemaCapability = "WorkerOpenTelemetrySchemaVersion";
 
     [TestMethod]
     public void AddWorkerTelemetry_ConnectionStringSet_KeepsEveryTraceAndEveryLog()
@@ -28,18 +35,31 @@ public sealed class TelemetryExtensionsTests
         Assert.IsFalse(options.EnableTraceBasedLogsSampler);
     }
 
-    // Without the connection string the exporter is not set up, so none of the settings above are applied.
-    // The check relies on the exporter's own defaults, as found in T15 on 2026-10-07. If it fails after a package
-    // upgrade, read the changelog for a changed default before changing the code.
+    // In Azure the worker exports its own logs, so the host must not relay them as well, or each log arrives twice.
     [TestMethod]
-    public void AddWorkerTelemetry_NoConnectionString_DoesNotSetUpTheExporter()
+    public void AddWorkerTelemetry_ConnectionStringSet_TellsTheHostToStopRelayingLogs()
+    {
+        using var provider = BuildProvider(FakeConnectionString);
+
+        var capabilities = provider.GetRequiredService<IOptions<WorkerOptions>>().Value.Capabilities;
+
+        Assert.IsTrue(capabilities.TryGetValue(WorkerOpenTelemetryCapability, out var enabled), $"{WorkerOpenTelemetryCapability} is not set.");
+        Assert.AreEqual(bool.TrueString, enabled);
+        Assert.IsTrue(capabilities.ContainsKey(WorkerOpenTelemetrySchemaCapability), $"{WorkerOpenTelemetrySchemaCapability} is not set.");
+    }
+
+    // Regression test for the first local Verify run of T15, on 2026-10-08: with the capability set and no
+    // exporter, no worker log reached the func start console. Without the connection string, the host must relay
+    // the logs, and no exporter is set up, so a local run works without Azure.
+    [TestMethod]
+    public void AddWorkerTelemetry_NoConnectionString_LeavesTheHostRelayingLogsAndSetsUpNoExporter()
     {
         using var provider = BuildProvider(connectionString: null);
 
-        var options = provider.GetRequiredService<IOptionsMonitor<AzureMonitorExporterOptions>>().CurrentValue;
+        var capabilities = provider.GetRequiredService<IOptions<WorkerOptions>>().Value.Capabilities;
 
-        Assert.IsNotNull(options.TracesPerSecond, "The exporter's default rate limit is still in place.");
-        Assert.IsTrue(options.EnableTraceBasedLogsSampler, "The exporter's default log sampler is still in place.");
+        Assert.IsFalse(capabilities.ContainsKey(WorkerOpenTelemetryCapability));
+        Assert.IsEmpty(provider.GetServices<IConfigureOptions<AzureMonitorExporterOptions>>());
     }
 
     private static ServiceProvider BuildProvider(string? connectionString)
@@ -51,7 +71,9 @@ public sealed class TelemetryExtensionsTests
             })
             .Build();
 
+        // The worker's builder in Program.cs registers the options services, so WorkerOptions resolves even when nothing configures it.
         var services = new ServiceCollection();
+        services.AddOptions();
         services.AddWorkerTelemetry(configuration);
 
         return services.BuildServiceProvider();
