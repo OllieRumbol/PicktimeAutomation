@@ -1,5 +1,8 @@
 using System.Net;
 using System.Web;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging.Testing;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using PicktimeAutomation.Models;
@@ -132,6 +135,40 @@ public sealed class GetAvailableSlotsTests
             () => service.GetAvailableSlotsAsync(ResourceId, BookingDate, CancellationToken.None));
     }
 
+    // Plan section 4.2: the raw body is what makes a failed read possible to diagnose.
+    [TestMethod]
+    [DataRow("{ \"status\": true, \"data\": [2026", DisplayName = "Malformed JSON")]
+    [DataRow("", DisplayName = "Empty body")]
+    [DataRow("null", DisplayName = "JSON null")]
+    [DataRow("""{ "status": true, "message": "Success" }""", DisplayName = "No data")]
+    public async Task GetAvailableSlotsAsync_BodyIsMalformed_LogsTheBodyAtWarning(string body)
+    {
+        var logger = new FakeLogger<PicktimeApiService>();
+        var service = CreateService(StubHttpMessageHandler.Returning(HttpStatusCode.OK, body), logger: logger);
+
+        await Assert.ThrowsExactlyAsync<PicktimeReadException>(
+            () => service.GetAvailableSlotsAsync(ResourceId, BookingDate, CancellationToken.None));
+
+        var record = logger.Collector.GetSnapshot().Single();
+        Assert.AreEqual(LogLevel.Warning, record.Level);
+        Assert.AreEqual(body, record.GetStructuredStateValue("ResponseBody") ?? string.Empty);
+    }
+
+    // Plan section 4.2: the logged body is cut to its first 1 KB.
+    [TestMethod]
+    public async Task GetAvailableSlotsAsync_LongMalformedBody_LogsOnlyTheFirstKilobyte()
+    {
+        var body = "<html>" + new string('x', 3000) + "</html>";
+        var logger = new FakeLogger<PicktimeApiService>();
+        var service = CreateService(StubHttpMessageHandler.Returning(HttpStatusCode.OK, body), logger: logger);
+
+        await Assert.ThrowsExactlyAsync<PicktimeReadException>(
+            () => service.GetAvailableSlotsAsync(ResourceId, BookingDate, CancellationToken.None));
+
+        var record = logger.Collector.GetSnapshot().Single();
+        Assert.AreEqual(body[..PicktimeApiService.MaxLoggedBodyLength], record.GetStructuredStateValue("ResponseBody"));
+    }
+
     [TestMethod]
     [DataRow(HttpStatusCode.InternalServerError)]
     [DataRow(HttpStatusCode.ServiceUnavailable)]
@@ -190,7 +227,10 @@ public sealed class GetAvailableSlotsTests
             () => service.GetAvailableSlotsAsync(ResourceId, BookingDate, cancellation.Token));
     }
 
-    private static PicktimeApiService CreateService(StubHttpMessageHandler handler, TimeSpan? timeout = null)
+    private static PicktimeApiService CreateService(
+        StubHttpMessageHandler handler,
+        TimeSpan? timeout = null,
+        ILogger<PicktimeApiService>? logger = null)
     {
         var httpClient = new HttpClient(handler)
         {
@@ -212,6 +252,7 @@ public sealed class GetAvailableSlotsTests
             bookingClient: httpClient,
             picktimeOptions,
             Options.Create(new ArcherOptions()),
-            new FakeTimeProvider(Now));
+            new FakeTimeProvider(Now),
+            logger ?? NullLogger<PicktimeApiService>.Instance);
     }
 }

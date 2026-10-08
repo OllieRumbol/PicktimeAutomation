@@ -15,6 +15,9 @@ internal sealed class FakeBookingService : IPicktimeBookingService
 
     public int CallCount => RequestedDates.Count;
 
+    /// <summary>The date returned by <see cref="DefaultBookingDate"/>. Invented, so a test can see it was used.</summary>
+    public DateOnly DefaultDate { get; init; } = new(2026, 10, 20);
+
     public Task<BookingSummary> BookArcheryIndoorTargetAsync(DateOnly? bookingDate = null, CancellationToken ct = default)
     {
         RequestedDates.Add(bookingDate);
@@ -28,5 +31,10 @@ internal sealed class FakeBookingService : IPicktimeBookingService
         };
 
         return Task.FromResult(summary);
+    }
+
+    public DateOnly DefaultBookingDate()
+    {
+        return DefaultDate;
     }
 }

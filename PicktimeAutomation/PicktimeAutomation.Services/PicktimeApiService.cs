@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using PicktimeAutomation.Models;
 using PicktimeAutomation.Services.Dates;
@@ -25,11 +26,15 @@ public class PicktimeApiService : IPicktimeApiService
 
     private const string BookingType = "resource";
 
+    // Enough to diagnose a malformed body, and a bound on what a body can put in the logs (plan section 4.2).
+    public const int MaxLoggedBodyLength = 1024;
+
     private readonly HttpClient _readClient;
     private readonly HttpClient _bookingClient;
     private readonly PicktimeOptions _picktimeOptions;
     private readonly ArcherOptions _archerOptions;
     private readonly TimeProvider _timeProvider;
+    private readonly ILogger<PicktimeApiService> _logger;
 
     /// <param name="readClient">Sends the availability <c>GET</c>. It may retry, because a read is safe to repeat.</param>
     /// <param name="bookingClient">Sends the booking <c>POST</c>. It must never retry (plan section 4.1).</param>
@@ -38,19 +43,22 @@ public class PicktimeApiService : IPicktimeApiService
         HttpClient bookingClient,
         IOptions<PicktimeOptions> picktimeOptions,
         IOptions<ArcherOptions> archerOptions,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        ILogger<PicktimeApiService> logger)
     {
         ArgumentNullException.ThrowIfNull(readClient);
         ArgumentNullException.ThrowIfNull(bookingClient);
         ArgumentNullException.ThrowIfNull(picktimeOptions);
         ArgumentNullException.ThrowIfNull(archerOptions);
         ArgumentNullException.ThrowIfNull(timeProvider);
+        ArgumentNullException.ThrowIfNull(logger);
 
         _readClient = readClient;
         _bookingClient = bookingClient;
         _picktimeOptions = picktimeOptions.Value;
         _archerOptions = archerOptions.Value;
         _timeProvider = timeProvider;
+        _logger = logger;
     }
 
     public async Task<IReadOnlyList<long>> GetAvailableSlotsAsync(string resourceId, DateOnly date, CancellationToken ct)
@@ -167,7 +175,7 @@ public class PicktimeApiService : IPicktimeApiService
     /// Returns the free slots. Anything other than a clear answer is a failed read, so a failed read
     /// can never be mistaken for a fully booked day (spec section 6.4).
     /// </summary>
-    private static IReadOnlyList<long> ParseFreeSlots(string responseBody, DateOnly date)
+    private IReadOnlyList<long> ParseFreeSlots(string responseBody, DateOnly date)
     {
         SlotsResponse? slotsResponse;
         try
@@ -176,12 +184,16 @@ public class PicktimeApiService : IPicktimeApiService
         }
         catch (JsonException exception)
         {
+            LogMalformedBody("The availability read", responseBody);
+
             throw new PicktimeReadException(
                 $"The availability read for {date:yyyy-MM-dd} returned a body that could not be parsed.", exception);
         }
 
         if (slotsResponse is null)
         {
+            LogMalformedBody("The availability read", responseBody);
+
             throw new PicktimeReadException(
                 $"The availability read for {date:yyyy-MM-dd} returned an empty body.");
         }
@@ -194,6 +206,8 @@ public class PicktimeApiService : IPicktimeApiService
 
         if (slotsResponse.Data is null)
         {
+            LogMalformedBody("The availability read", responseBody);
+
             throw new PicktimeReadException(
                 $"The availability read for {date:yyyy-MM-dd} returned no data.");
         }
@@ -227,7 +241,7 @@ public class PicktimeApiService : IPicktimeApiService
     /// <see cref="BookingResultStatus.Unknown"/>, never <see cref="BookingResultStatus.Rejected"/>,
     /// because a rejection falls through to the next target and could book the same hour twice.
     /// </summary>
-    private static async Task<BookingResult> ClassifyBookingResponseAsync(HttpResponseMessage response, CancellationToken ct)
+    private async Task<BookingResult> ClassifyBookingResponseAsync(HttpResponseMessage response, CancellationToken ct)
     {
         ThrowIfAuthenticationFailed(response, "The booking request");
 
@@ -266,7 +280,7 @@ public class PicktimeApiService : IPicktimeApiService
         }
     }
 
-    private static BookingResult ParseBookingResponse(string responseBody)
+    private BookingResult ParseBookingResponse(string responseBody)
     {
         BookingSuccessfulResponse? bookingResponse;
         try
@@ -275,11 +289,15 @@ public class PicktimeApiService : IPicktimeApiService
         }
         catch (JsonException)
         {
+            LogMalformedBody("The booking request", responseBody);
+
             return UnknownResult("The booking response could not be parsed.");
         }
 
         if (bookingResponse is null)
         {
+            LogMalformedBody("The booking request", responseBody);
+
             return UnknownResult("The booking response was empty.");
         }
 
@@ -293,6 +311,24 @@ public class PicktimeApiService : IPicktimeApiService
             bookingResponse.Data?.Id,
             bookingResponse.Message,
             bookingResponse.Data?.BookingEmailConfirmation ?? false);
+    }
+
+    /// <summary>
+    /// The raw text is what makes a malformed body possible to diagnose. A booking response can hold the
+    /// archer's name and email, which plan section 6 accepts. It never holds the scantoken, which is a request header.
+    /// </summary>
+    private void LogMalformedBody(string callDescription, string responseBody)
+    {
+        var loggedBody = responseBody.Length > MaxLoggedBodyLength
+            ? responseBody[..MaxLoggedBodyLength]
+            : responseBody;
+
+        _logger.LogWarning(
+            "{CallDescription} returned a malformed or empty body. BodyLength={BodyLength} Body (first {MaxLoggedBodyLength} characters)={ResponseBody}",
+            callDescription,
+            responseBody.Length,
+            MaxLoggedBodyLength,
+            loggedBody);
     }
 
     private static BookingResult UnknownResult(string message)
