@@ -2,7 +2,7 @@
 
 > **What this document is for:** It answers *what do we do next?* It splits the approved design into small, verifiable steps and tracks progress against them.
 
-Last updated: 2026-10-08
+Last updated: 2026-10-09
 
 <!--
 How to use this file
@@ -370,7 +370,7 @@ Goal: every run can be understood from its logs.
 
 Goal: the Function runs in Azure on the correct schedule, deployed by CI.
 
-- [ ] **T16 — Create the Azure resources (manual)**
+- [x] **T16 — Create the Azure resources (manual)**
   - Refs: spec 8 assumption 8, plan 2, plan 3.3, plan 6, plan 8.1, plan 8.3
   - Depends on: T12
   - Done when:
@@ -382,7 +382,24 @@ Goal: the Function runs in Azure on the correct schedule, deployed by CI.
     - The user-assigned managed identity exists, with a federated credential for this repository's `main` branch and the Website Contributor role on the Function App.
     - SCM basic authentication is off, and HTTPS Only is on, on the Function App.
   - Verify: check the settings list in the portal (Function App → Environment variables), the budget (Cost Management → Budgets), and the identity's federated credential and role
-  - Notes: Azure CLI 2.90.0 is installed (plan section 8.2), and the portal also works. The Function App's Deployment Center can create the managed identity and its federated credential; choose "User-assigned identity", not "Basic authentication".
+  - Notes:
+    1. Done by the owner in the Azure portal on 2026-10-08 and 2026-10-09. The Azure CLI was not used. Nothing was changed from the code or through GitHub. This file holds no subscription, tenant, client or principal id, connection string, key or token.
+    2. Subscription: "Azure Plan", the pay-as-you-go plan under a Microsoft Customer Agreement (spec section 8, assumption 8).
+    3. Resources, all in UK South, in the resource group `rg-picktime-automation`:
+       * Log Analytics workspace `log-picktime-automation`: pay-as-you-go (per GB), with a daily cap of 0.1 GB. The cap resets at 21:00 UTC. Retention is the default (plan section 8.3).
+       * Function App `func-picktime-automation`: Consumption plan on Windows (`ASP-rgpicktimeautomation-8147`, Y1), .NET 10 isolated worker, runtime 4.x, 64-bit. "Secure unique default hostname" was on, so the default domain has a random suffix. The app name, which the deployment uses, has none.
+       * Storage account: created by the Function App wizard. The Azure Files connection is kept, because a Windows Consumption app keeps its content share there. Blob diagnostic settings are not configured.
+       * Application Insights `appi-picktime-automation`: workspace-based, linked to `log-picktime-automation` (checked on its Overview page). The authentication type is "Secrets", so Azure set `APPLICATIONINSIGHTS_CONNECTION_STRING`, which the T15 exporter needs. OTLP support is off.
+       * User-assigned managed identity `id-picktime-deploy`, with no isolation scope or resource restriction. Federated credential `github-main`: issuer `https://token.actions.githubusercontent.com`, subject `repo:OllieRumbol/PicktimeAutomation:ref:refs/heads/main`, audience `api://AzureADTokenExchange`. Role: Website Contributor on the Function App only ("This resource").
+       * Budget `budget-picktime-monthly` on the resource group: £1, monthly, from 2026-10-01 to 2030-12-30. One alert, on actual cost at 100 %, by email. No forecast alert.
+    4. Application settings: the 18 settings from plan section 2 (17 keys with the lists flattened, and `BookingSchedule`), and `WEBSITE_TIME_ZONE` = `GMT Standard Time`. They were generated from `local.settings.json` and pasted with Advanced edit. The generated file was then deleted. Azure set `FUNCTIONS_WORKER_RUNTIME`, `FUNCTIONS_EXTENSION_VERSION`, `AzureWebJobsStorage`, `WEBSITE_CONTENTAZUREFILECONNECTIONSTRING`, `WEBSITE_CONTENTSHARE` and `WEBSITE_USE_PLACEHOLDER_DOTNETISOLATED`. `AzureWebJobs.TargetBookingFunction.Disabled` is not set.
+    5. Security on the Function App: SCM and FTP basic authentication off (set in the wizard), FTP state "FTPS only", HTTPS Only on, minimum TLS 1.2. Continuous deployment was disabled in the wizard, so Azure wrote nothing to the repository.
+    6. Difference 1, quota. The first Function App creation failed pre-flight validation with `SubscriptionIsOverQuotaForSku`: "Current Limit (Y1 VMs): 0" in UK South. A free Basic support request (2610080020003712: UK South, not zone redundant, Y1, new limit 2) was closed automatically, and the second attempt succeeded. A new subscription can start with no Y1 quota. Plan section 8.1 now says so.
+    7. Difference 2, the identity. This note said before to create the identity through the Function App's Deployment Center. It was created directly instead: Managed Identities, then the federated credential, then the role in the Function App's access control (IAM). The reason: the Deployment Center can commit its own workflow file to the repository, the workflow is T17's job, and `main` is protected.
+    8. Difference 3, the subject format. The portal now generates GitHub's immutable subject (`repo:<owner>@<owner id>/<repo>@<repo id>:…`) and recommends it. The repository's OIDC setting is `use_immutable_subject: false`, so GitHub sends the classic subject. The credential was edited to the classic form in note 3 to match. Plan section 8.4 and T17 note 5 record what this means for the workflow. Switching both sides to the immutable form is a possible later improvement. It is not done.
+    9. To renew: the budget ends on 2030-12-30. Extend its end date before then, or the £1 alert stops.
+    10. Done when, item by item: resources, plan and subscription (notes 2 and 3); settings, with flattened lists, `WEBSITE_TIME_ZONE` and `BookingSchedule` (note 4); `Disabled` not set (note 4); budget (note 3); workspace-based Application Insights and the 0.1 GB cap (note 3); identity, credential and role (note 3); SCM basic authentication off and HTTPS Only on (note 5).
+    11. Verify: the owner's record above, from the portal, covers the settings list, the budget, and the identity's federated credential and role. The code is unchanged. Standard test command on 2026-10-09: 180 and 34 passed, as after T15.
 
 - [ ] **T17 — Add the GitHub Actions workflow**
   - Refs: spec 4.1 defect 8, spec 9, plan 6, plan 8.1, plan 8.4
@@ -399,6 +416,7 @@ Goal: the Function runs in Azure on the correct schedule, deployed by CI.
     2. Do not merge or push to `main` between 00:05 and 01:00 on a run day, because a deployment restarts the host (spec section 9, exception 2).
     3. Changed on 2026-10-06, from the `/review-plan` finding G1, with the owner's approval. Before, T17 depended only on T16, so it could deploy before T14 and T15.
     4. From the first deploy, make no booking by hand between 00:00 and 01:00 on a run day (spec section 9). The run would book the fallback target for the same hour. Added on 2026-10-06, from the `/review-plan` finding G8, with the owner's approval.
+    5. The federated credential trusts only the classic subject for `main` (T16 notes 3 and 8, plan section 8.4). So the deploy job runs only on a push to `main`, and it must not set `environment:`, because a job with an environment sends a different subject and the sign-in fails. Write the workflow in this task. Do not let the Function App's Deployment Center commit one. The app name to deploy to is `func-picktime-automation`. Added on 2026-10-09, with the owner's approval.
 
 - [ ] **T18 — Deploy and check the schedule**
   - Refs: spec 6.1, spec 6.2, plan 3, plan 3.3, plan 5.2, plan 8.1
@@ -491,3 +509,4 @@ Goal: the automation is proved in production and left running.
 * 2026-10-06 — T10a — Bound the read client's timeout — branch `task/t12-minimum-headers`
 * 2026-10-07 — T14 — Make one real booking from a local run — branch `task/t14-local-booking`
 * 2026-10-08 — T15 — Logging and observability — branch `task/t15-logging`, pull request #24
+* 2026-10-09 — T16 — Create the Azure resources — branch `task/t16-azure-resources`
