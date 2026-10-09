@@ -3,7 +3,7 @@
 > **What this document is for:** It answers *how will we build it?* It turns the requirements in `spec.md` into a technical design, and it is agreed before any code is written.
 
 Status: Approved
-Last updated: 2026-10-08
+Last updated: 2026-10-09
 
 This document is the record of design decisions for this project. It says how the requirements in spec.md are met, and why that way. It does not restate requirements: it refers to them by section, such as "spec section 6.2". It was split out of spec.md on 2026-09-29. Keep it updated as decisions change.
 
@@ -590,6 +590,8 @@ Required application settings:
 
 Plus every setting in section 2.
 
+**Y1 quota.** A new subscription can start with no Consumption plan quota in a region. Creating the Function App then fails pre-flight validation with `SubscriptionIsOverQuotaForSku` and "Current Limit (Y1 VMs): 0". A free quota request fixes it: a Basic support request for "Function or Web App (Windows and Linux)", plan Y1, in the region. This subscription had the error in UK South on 2026-10-08. The request for a limit of 2 was closed automatically, and the next attempt succeeded.
+
 **Why Windows.** There are two reasons, and either one is enough.
 
 1. **.NET 10 is not available on the Linux Consumption plan.** Microsoft's documentation states that .NET 9 is the last .NET version supported there, and that the Linux Consumption plan retires on 30 September 2028. Apps on the Windows Consumption plan are not affected. Checked on 2026-09-30, and again on 2026-10-06: .NET 10 is generally available on Functions v4.
@@ -653,6 +655,13 @@ A single GitHub Actions workflow in `.github/workflows/`. It runs on `windows-la
 3. On `main` only, and only when tests pass, publish and deploy to the Function App.
 4. Sign in with `azure/login` using OpenID Connect, then deploy with `Azure/functions-action`. The workflow needs the `id-token: write` permission. This is Microsoft's recommended method (checked on 2026-09-30).
 5. The managed identity's client id, tenant id and subscription id are GitHub repository variables. They identify the identity; they are not secrets.
+
+**The sign-in trusts one subject.** The identity's federated credential trusts the classic subject for the `main` branch: `repo:OllieRumbol/PicktimeAutomation:ref:refs/heads/main`. GitHub sends this form because the repository's OIDC setting `use_immutable_subject` is `false`. Azure accepts a token only when its subject matches exactly. So:
+
+* The deploy job must run on a push to `main`. A job on a pull request sends a different subject, so it cannot sign in. Step 3 already keeps it off pull requests.
+* The deploy job must not use a GitHub environment. A job with `environment:` sends `repo:<owner>/<repo>:environment:<name>` in place of the branch, and the sign-in fails.
+
+The portal now generates GitHub's immutable subject form (`repo:<owner>@<owner id>/<repo>@<repo id>:…`) and recommends it. Switching both the repository setting and the credential to that form is a possible later improvement. It is not done.
 
 Tests gate the deployment. A red build does not reach Azure.
 
