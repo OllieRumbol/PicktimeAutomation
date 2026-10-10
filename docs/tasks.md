@@ -463,7 +463,7 @@ Goal: the Function runs in Azure on the correct schedule, deployed by CI.
 
 Goal: the automation is proved in production and left running.
 
-- [ ] **T19 — Book end to end in Azure (manual)**
+- [x] **T19 — Book end to end in Azure (manual)**
   - Refs: spec 6.7, spec 9, plan 5.1
   - Depends on: T18
   - Done when:
@@ -472,6 +472,18 @@ Goal: the automation is proved in production and left running.
   - Verify: `POST https://<function-app>.azurewebsites.net/api/book?bookingDate=<yyyy-MM-dd>`, with the function key in the `x-functions-key` header
   - Notes: As in T14, set only `Booking:Hours:0` in the Azure app settings for this test, so it makes one booking, then restore the other hours. Choose a date you have not already booked. Cancel the booking by hand if it is not wanted.
     1. Changing an app setting restarts the host. Do not change one between 00:05 and 01:00 on a run day (spec section 9, exception 2). Added on 2026-10-06, from the `/review-plan` suggestion S10.
+
+    Result, 2026-10-09. The owner made the booking through the Azure HTTP trigger on Friday 2026-10-09 at about 21:45 London time, outside 00:05 to 01:00 on a run day. Claude sent no request: it recorded the result in the documents only on 2026-10-10. Booking ids are redacted here, and the function key is not recorded.
+    1. Setup. `func-picktime-automation` was deployed from `main` by the T17 workflow run on the merge commit of pull request #26 (T17 note 14). The Azure app settings kept all three hours (17, 18 and 19). No app setting was changed, so the host did not restart.
+    2. Request: T19's Verify command, `POST https://<function-app>.azurewebsites.net/api/book?bookingDate=2026-10-13`, with the function key in the `x-functions-key` header, sent with `curl.exe` from PowerShell. The owner took the key from the portal and cleared it from the terminal afterwards.
+    3. Response: `{"bookingDate":"2026-10-13","attempts":[{"hour":17,"outcome":"Booked","targetName":"2b","bookingId":"<id>","errorMessage":null},{"hour":18,"outcome":"Booked","targetName":"2b","bookingId":"<id>","errorMessage":null},{"hour":19,"outcome":"Booked","targetName":"2b","bookingId":"<id>","errorMessage":null}],"failedReads":[],"verdict":"Success","bookedCount":3,"noAvailabilityCount":0,"failedCount":0,"unconfirmedCount":0}`.
+    4. Time. The whole HTTP call took 18.36 seconds for three bookings, about 6 seconds each, as in T14 and T15. Plan sections 3.4, 4.1 and 8.3 are not changed.
+    5. Checks. All three confirmation emails arrived, and the three slots show as taken on the Picktime site. The owner is keeping the bookings, so none was cancelled. All three hours booked on 2b, so no hour was already held by a hand booking: the run would then have booked 3a for that hour.
+    6. Difference 1, all three hours. This entry's note said to set only `Booking:Hours:0` and make one booking. Instead, all three hours were booked, by the owner's choice, because the owner wanted 13 October booked. It was a real catch-up booking, which is the manual trigger's purpose (spec section 6.7). 13 October is a Tuesday booking date, and the scheduled run that books it was on Tuesday 6 October, before the deployment. So no scheduled run books that date, and spec section 9 exception 1 does not apply. No app setting was changed, so the second Done when item holds without a change.
+    7. Difference 2, the order. T19 depends on T18, which waits for the first scheduled run, on Tuesday 2026-10-13 at 00:05 London time. T19 was done first, by the owner's choice, because the deployment had already worked (T17 notes 14 and 16). T18 is still open. This run was through the HTTP trigger, so it does not count as T18's first scheduled run.
+    8. This run's logs are in Application Insights. T20 uses this run to test the plan section 5.4 query. It was not checked in Logs (KQL) in this task.
+    9. Done when, item by item: a booking fired through the Azure HTTP trigger shows on the Picktime site, and its confirmation email arrived (notes 2, 3 and 5); all three hours are in the Azure app settings afterwards, because none was changed (notes 1 and 6). This also meets the real-booking item in spec section 9. T23 checks spec section 9 as a whole.
+    10. Verify: the request in note 2 returned verdict `Success` with three `Booked` attempts. No code or test changed. Standard test command on 2026-10-10: 180 and 34 passed, as after T17.
 
 - [ ] **T20 — Pin the 90-day query (manual)**
   - Refs: spec 9, plan 5.2, plan 5.4, plan 8.3
@@ -482,6 +494,7 @@ Goal: the automation is proved in production and left running.
     - It is recorded whether the Invocations view shows data with OpenTelemetry enabled (plan section 5.2).
   - Verify: open the dashboard and see the T19 run with no empty columns
   - Notes:
+    1. The T19 run is the manual booking made on 2026-10-09 at about 21:45 London time (20:45 UTC), for booking date 2026-10-13, with verdict `Success` and three hours booked (T19 note 3).
 
 - [ ] **T21 — Check one unattended scheduled run (manual)**
   - Refs: spec 3 goals 1–3, spec 6.1, spec 6.5, plan 3, plan 5
@@ -539,3 +552,4 @@ Goal: the automation is proved in production and left running.
 * 2026-10-08 — T15 — Logging and observability — branch `task/t15-logging`, pull request #24
 * 2026-10-09 — T16 — Create the Azure resources — branch `task/t16-azure-resources`
 * 2026-10-10 — T17 — Add the GitHub Actions workflow — branch `task/t17-workflow`, pull request #26; completed on branch `docs/t17-complete`
+* 2026-10-10 — T19 — Book end to end in Azure — branch `task/t19-azure-booking`
