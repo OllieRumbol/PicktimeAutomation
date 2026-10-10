@@ -2,7 +2,7 @@
 
 > **What this document is for:** It answers *what do we do next?* It splits the approved design into small, verifiable steps and tracks progress against them.
 
-Last updated: 2026-10-09
+Last updated: 2026-10-10
 
 <!--
 How to use this file
@@ -401,7 +401,7 @@ Goal: the Function runs in Azure on the correct schedule, deployed by CI.
     10. Done when, item by item: resources, plan and subscription (notes 2 and 3); settings, with flattened lists, `WEBSITE_TIME_ZONE` and `BookingSchedule` (note 4); `Disabled` not set (note 4); budget (note 3); workspace-based Application Insights and the 0.1 GB cap (note 3); identity, credential and role (note 3); SCM basic authentication off and HTTPS Only on (note 5).
     11. Verify: the owner's record above, from the portal, covers the settings list, the budget, and the identity's federated credential and role. The code is unchanged. Standard test command on 2026-10-09: 180 and 34 passed, as after T15.
 
-- [ ] **T17 — Add the GitHub Actions workflow**
+- [x] **T17 — Add the GitHub Actions workflow**
   - Refs: spec 4.1 defect 8, spec 9, plan 6, plan 8.1, plan 8.4
   - Depends on: T10a, T14, T15, T16
   - Done when:
@@ -431,6 +431,20 @@ Goal: the Function runs in Azure on the correct schedule, deployed by CI.
        * The workflow does not refuse a deploy between 00:00 and 01:00 London time on a run day. The rule (note 2) depends on the owner.
        * NU1900 (audit data could not be read) stays a warning, so an audit that checked nothing does not stop a deploy.
     11. Next step: the pull request run must show `Build and test` passed and `Deploy` skipped. The owner merges outside 00:05 to 01:00 on a run day, then phase 2 checks the run on `main`, the deploy and the portal.
+    12. Phase 2 on 2026-10-10. Before merging, the owner made `Build and test` (GitHub Actions) a required status check on `main`. "Require branches to be up to date" is off. Enforce admins stays on. Checked read-only with `gh api` on 2026-10-10.
+    13. Pull request #26 (`task/t17-workflow`) merged to `main` as `efd34d5` on 2026-10-09 at 18:59 UTC (19:59 London time), outside 00:05 to 01:00.
+    14. Runs, from `gh run view`:
+       * Pull request run 37948577781, on head `4602b8c`: `Build and test` succeeded and `Deploy` was skipped.
+       * Push run 37977175928, on `efd34d5` (https://github.com/OllieRumbol/PicktimeAutomation/actions/runs/37977175928): `Build and test` succeeded and `Deploy` succeeded.
+    15. The repository variables `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and `AZURE_SUBSCRIPTION_ID` exist (`gh variable list`, names only). Their values are not recorded here.
+    16. Portal checks by the owner on 2026-10-10, on `func-picktime-automation`: the Functions list shows `ManualBookingFunction` and `TargetBookingFunction`; `TargetBookingFunction` is enabled; SCM basic authentication is still off.
+    17. Note 10's open points, decided by the owner on 2026-10-10. Accepted for now, not changed:
+       * Every push to `main` deploys, including docs-only commits.
+       * `azure/login` and `Azure/functions-action` use major tags, not commit SHAs.
+       * NU1900 stays a warning.
+       The point that the workflow does not refuse a deploy between 00:00 and 01:00 is not changed. The rule in note 2 still depends on the owner.
+    18. Done when, item by item: build and test on push to `main` and on pull request, on `windows-latest` with .NET `10.0.x` (notes 6 and 14); deploy only on `main` and only after the tests pass (notes 6 and 14); OpenID Connect sign-in with no deployment secret, because the workflow uses no secret and no publish profile (note 6); the three ids are repository variables (note 15); NuGet Audit codes `NU1901` to `NU1904` fail the build (note 7).
+    19. Verify: the pull request run was green with `Deploy` skipped, the push to `main` deployed, and SCM basic authentication is still off (notes 14 and 16). Standard test command on 2026-10-10: 180 and 34 passed, as after T16.
 
 - [ ] **T18 — Deploy and check the schedule**
   - Refs: spec 6.1, spec 6.2, plan 3, plan 3.3, plan 5.2, plan 8.1
@@ -524,3 +538,4 @@ Goal: the automation is proved in production and left running.
 * 2026-10-07 — T14 — Make one real booking from a local run — branch `task/t14-local-booking`
 * 2026-10-08 — T15 — Logging and observability — branch `task/t15-logging`, pull request #24
 * 2026-10-09 — T16 — Create the Azure resources — branch `task/t16-azure-resources`
+* 2026-10-10 — T17 — Add the GitHub Actions workflow — branch `task/t17-workflow`, pull request #26; completed on branch `docs/t17-complete`
