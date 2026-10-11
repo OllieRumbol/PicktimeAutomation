@@ -513,7 +513,7 @@ Goal: the automation is proved in production and left running.
   - Verify: the plan section 5.4 query, the run's log lines, the inbox and the Picktime site
   - Notes:
 
-- [ ] **T22 — Rewrite the README**
+- [x] **T22 — Rewrite the README**
   - Refs: spec 9
   - Depends on: T18
   - Done when:
@@ -521,6 +521,14 @@ Goal: the automation is proved in production and left running.
     - It states the operating rules in spec section 9: the manual trigger is not used between 00:05 and 01:00 on a run day, or for a booking date already booked; no deployment is made between 00:05 and 01:00 on a run day; and no booking is made by hand between 00:00 and 01:00 on a run day.
   - Verify: follow the README from a fresh clone
   - Notes:
+    1. Done before T18, by the owner's choice. T18 waits for the first scheduled run, on Tuesday 2026-10-13 at 00:05 London time. Nothing in the README depends on T18's result: the schedule, the settings and the deployment are already in place (T17 notes 14 to 16).
+    2. The README covers: what the project does; how it is built, with both triggers and `POST /api/book`; running it locally, with a `local.settings.json` template and the flattened list keys from plan section 2; running the tests; every setting, by name, with where it applies; deployment and the three repository variables, by name only; checking runs; and the operating rules from spec section 9. It links to the spec, plan and tasks for detail. Every setting value in the template is a fake placeholder. The clone URL is the real public repository URL, at the owner's request.
+    3. Operating rules. The README also forbids a merge to `main` and an app setting change between 00:05 and 01:00 on a run day. A merge deploys, and a deploy or an app setting change restarts the host, which is the event in spec section 9 exception 2 (T19 note 1).
+    4. Verify, part 1, on 2026-10-11, by Claude. A fresh clone of `task/t22-readme` outside the repository, with the new README copied in, then README steps 2 and the test command. The first clone, in a deep temporary folder, failed to build: the Functions SDK's generated `obj\Debug\net10.0\WorkerExtensions\...\publish` folder passed the Windows 260-character path limit ("exceeds the OS max path limit"). README step 1 now says to clone into a short path on Windows. From `C:\Users\<user>\AppData\Local\Temp\t22`: build passed with 0 warnings and 0 errors, and the tests passed, 180 and 34, with no `local.settings.json` and no Azurite. The clone was deleted.
+    5. Verify, part 2, on 2026-10-11, by the owner. A fresh clone of `main` at `92b94be` in a short folder. The code is the same as on this branch, and only `README.md` differs. Steps 2 and 4 to 6, with the owner's own `local.settings.json`, the timer disabled and no connection string. `func start` showed `ManualBookingFunction: [POST] http://localhost:7071/api/book` and "Function TargetBookingFunction is disabled". `POST /api/book?bookingDate=2027-04-15` returned `{"bookingDate":"2027-04-15","attempts":[],"failedReads":[],"verdict":"Skipped","bookedCount":0,"noAvailabilityCount":0,"failedCount":0,"unconfirmedCount":0}`. The console showed the three worker lines: `Booking run started. ... BookingDate=2027-04-15 BookingDateSupplied=True InSeason=False`, the skip line, and `Booking run finished. Date=2027-04-15 Booked=0 NoAvailability=0 Failed=0 Unconfirmed=0 FailedReads=0 Verdict=Skipped`. No availability, booking or `picktime.com` line appeared, and no line held the token, the account id or the email. Every README step worked as written.
+    6. Claude sent no request to Picktime, the HTTP trigger or Azure, and ran no `func start`. No code, workflow or test changed.
+    7. Done when, item by item: the README says what the project does, how to run it locally and which settings it needs (note 2); it states the operating rules in spec section 9 (notes 2 and 3).
+    8. Verify: the README was followed from a fresh clone (notes 4 and 5). Standard test command on 2026-10-11: 180 and 34 passed, as after T20.
 
 - [ ] **T23 — Close out**
   - Refs: spec 9
@@ -562,3 +570,4 @@ Goal: the automation is proved in production and left running.
 * 2026-10-10 — T17 — Add the GitHub Actions workflow — branch `task/t17-workflow`, pull request #26; completed on branch `docs/t17-complete`
 * 2026-10-10 — T19 — Book end to end in Azure — branch `task/t19-azure-booking`
 * 2026-10-11 — T20 — Pin the 90-day query — branch `task/t20-pin-query`
+* 2026-10-11 — T22 — Rewrite the README — branch `task/t22-readme`
