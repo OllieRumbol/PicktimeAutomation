@@ -485,7 +485,7 @@ Goal: the automation is proved in production and left running.
     9. Done when, item by item: a booking fired through the Azure HTTP trigger shows on the Picktime site, and its confirmation email arrived (notes 2, 3 and 5); all three hours are in the Azure app settings afterwards, because none was changed (notes 1 and 6). This also meets the real-booking item in spec section 9. T23 checks spec section 9 as a whole.
     10. Verify: the request in note 2 returned verdict `Success` with three `Booked` attempts. No code or test changed. Standard test command on 2026-10-10: 180 and 34 passed, as after T17.
 
-- [ ] **T20 — Pin the 90-day query (manual)**
+- [x] **T20 — Pin the 90-day query (manual)**
   - Refs: spec 9, plan 5.2, plan 5.4, plan 8.3
   - Depends on: T19
   - Done when:
@@ -495,6 +495,14 @@ Goal: the automation is proved in production and left running.
   - Verify: open the dashboard and see the T19 run with no empty columns
   - Notes:
     1. The T19 run is the manual booking made on 2026-10-09 at about 21:45 London time (20:45 UTC), for booking date 2026-10-13, with verdict `Success` and three hours booked (T19 note 3).
+
+    Result, 2026-10-11. The owner did these steps in the Azure portal. Claude sent no request to Picktime, the HTTP trigger or Azure: it recorded the result in the documents only.
+    1. The query. The owner ran the plan section 5.4 query, unchanged, in Application Insights `appi-picktime-automation` → Logs, in KQL mode, with the time range "Set in query". It returned one row, the T19 run: timestamp 2026-10-09 20:50:48 UTC, `BookingDate` 2026-10-13, `Booked` 3, `Unavailable` 0, `Failed` 0, `Unconfirmed` 0, `FailedReads` 0, `Verdict` `Success`. Every column was filled. This proves that the named placeholders reach `customDimensions` and that nothing was sampled out (plan section 5.2).
+    2. Cosmetic only: `BookingDate` shows as `2026-10-13T00:00:00.0000000Z`, because Application Insights treats the value as a date. The value is correct, and the query was not changed.
+    3. The pinned tile. The owner pinned the query to the private Azure dashboard "My Dashboard". The tile first showed "No data", because the dashboard's time filter was "Past 24 hours", and it overrides the query's `ago(90d)`. The owner set the tile to override the dashboard time at tile level, with the timespan "Past 30 days". The tile then showed the T19 run with all eight columns filled. Plan section 5.4 now records this. The full 90 days remain available by running the query in Logs.
+    4. The Invocations view. `func-picktime-automation` → Functions → `ManualBookingFunction` → Invocations shows data with OpenTelemetry enabled: success count 1 and error count 0 for the last 30 days, and one row for the T19 call on 2026-10-09 at 21:50:30 London time, status Success, result code 200, duration 18,264 ms. So Invocations stays the normal check. Plan section 5.2 now records this.
+    5. Done when, item by item: the query returns the T19 run with every column filled (notes 1 and 2); the query is pinned to an Azure dashboard (note 3); the Invocations view is recorded as showing data (note 4).
+    6. Verify: the dashboard tile shows the T19 run with no empty columns (note 3). No code or test changed. Standard test command on 2026-10-11: 180 and 34 passed, as after T19.
 
 - [ ] **T21 — Check one unattended scheduled run (manual)**
   - Refs: spec 3 goals 1–3, spec 6.1, spec 6.5, plan 3, plan 5
@@ -553,3 +561,4 @@ Goal: the automation is proved in production and left running.
 * 2026-10-09 — T16 — Create the Azure resources — branch `task/t16-azure-resources`
 * 2026-10-10 — T17 — Add the GitHub Actions workflow — branch `task/t17-workflow`, pull request #26; completed on branch `docs/t17-complete`
 * 2026-10-10 — T19 — Book end to end in Azure — branch `task/t19-azure-booking`
+* 2026-10-11 — T20 — Pin the 90-day query — branch `task/t20-pin-query`

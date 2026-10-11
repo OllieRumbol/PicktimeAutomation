@@ -375,7 +375,7 @@ Two ways to reach the logs, in increasing order of effort:
 
 Log stream in the portal is not available. When the host uses OpenTelemetry, the Azure portal does not support log streaming (Microsoft Learn, "Use OpenTelemetry with Azure Functions", checked on 2026-10-06). A manual run returns its summary in the HTTP response, and its log lines are in Logs (KQL) after it finishes.
 
-After the first run in Azure, confirm that the Invocations view shows data with OpenTelemetry enabled. If it does not, Logs (KQL) becomes the normal check.
+After the first run in Azure, confirm that the Invocations view shows data with OpenTelemetry enabled. If it does not, Logs (KQL) becomes the normal check. Confirmed on 2026-10-11 with the T19 run: the Invocations view shows it, so Invocations stays the normal check.
 
 ### 5.3 What each run logs
 
@@ -402,7 +402,7 @@ Never log the `scantoken`.
 
 ### 5.4 The last 90 days at a glance
 
-Paste this into Application Insights → Logs, then **Pin to dashboard**. After that, every run in the last 90 days is one click away:
+Paste this into Application Insights → Logs, then **Pin to dashboard**. After that, recent runs are one click away on the dashboard, and every run in the last 90 days is in Logs:
 
 ```kusto
 traces
@@ -420,6 +420,8 @@ traces
 ```
 
 Up to 90 days of runs, with any row that did not book every configured hour obvious at a glance. The window matches the free retention period in section 8.3. Older runs are not kept. Add `| where Verdict != "Success"` to see only the runs worth investigating. A `FailedReads` value above zero means Picktime could not be read, not that the day was full. For any row with `Unconfirmed` above zero, check the Picktime confirmation emails for that date.
+
+**The pinned tile's time range.** A pinned tile follows the dashboard's time filter, not the query's `ago(90d)`, unless the tile overrides it. So set the override at tile level. The tile uses "Past 30 days" (set on 2026-10-11). That is shorter than 90 days, so the tile shows only the last 30 days. The full 90 days remain available: run the query in Logs.
 
 ### 5.5 Residual risk
 
