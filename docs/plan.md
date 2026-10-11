@@ -402,7 +402,7 @@ Never log the `scantoken`.
 
 ### 5.4 The last 90 days at a glance
 
-Paste this into Application Insights → Logs, then **Pin to dashboard**. After that, every run in the last 90 days is one click away:
+Paste this into Application Insights → Logs, then **Pin to dashboard**. After that, recent runs are one click away on the dashboard, and every run in the last 90 days is in Logs:
 
 ```kusto
 traces
