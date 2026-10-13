@@ -2,7 +2,7 @@
 
 > **What this document is for:** It answers *what do we do next?* It splits the approved design into small, verifiable steps and tracks progress against them.
 
-Last updated: 2026-10-10
+Last updated: 2026-10-13
 
 <!--
 How to use this file
@@ -446,7 +446,7 @@ Goal: the Function runs in Azure on the correct schedule, deployed by CI.
     18. Done when, item by item: build and test on push to `main` and on pull request, on `windows-latest` with .NET `10.0.x` (notes 6 and 14); deploy only on `main` and only after the tests pass (notes 6 and 14); OpenID Connect sign-in with no deployment secret, because the workflow uses no secret and no publish profile (note 6); the three ids are repository variables (note 15); NuGet Audit codes `NU1901` to `NU1904` fail the build (note 7).
     19. Verify: the pull request run was green with `Deploy` skipped, the push to `main` deployed, and SCM basic authentication is still off (notes 14 and 16). Standard test command on 2026-10-10: 180 and 34 passed, as after T16.
 
-- [ ] **T18 — Deploy and check the schedule**
+- [x] **T18 — Deploy and check the schedule**
   - Refs: spec 6.1, spec 6.2, plan 3, plan 3.3, plan 5.2, plan 8.1
   - Depends on: T9a, T15, T17
   - Done when:
@@ -458,6 +458,19 @@ Goal: the Function runs in Azure on the correct schedule, deployed by CI.
   - Verify: Application Insights → Logs (KQL) after the first scheduled run. Log stream in the portal is not available, because the host uses OpenTelemetry (plan section 5.2).
   - Notes:
     1. Changed on 2026-10-06, from the `/review-plan` finding G3, with the owner's approval. Before, the check used Log stream, and it could not catch a missing time zone setting after BST ends.
+
+    Result, 2026-10-13. The owner ran a query in Application Insights → Logs (KQL) after the first scheduled run, and sent Claude the run's log lines. Claude sent no request to Picktime, the HTTP trigger or Azure: it read the GitHub Actions run list with `gh` and recorded the result in the documents only. Booking ids are redacted here. T21 records the same run's bookings and the owner's checks of them.
+    1. Deployment. The Function is deployed from `main` by the T17 workflow. The first deploy was the push run on the merge of pull request #26 (T17 note 14). Every later push to `main` deployed again. The last one before this run was the push run on the merge of pull request #30, started on 2026-10-11 at 09:17 UTC. `gh run list` shows it succeeded. No push to `main` was made between it and this run.
+    2. The run. This is the first scheduled run after deployment: Tuesday 2026-10-13 at 00:05 London time. The deployment was on Friday 2026-10-09 at 19:59 London time, after that day's 00:05 run time, and Saturday to Monday are not run days. The Azure manual bookings for 2026-10-13, 2026-10-15 and 2026-10-16 were made before this run, through the HTTP trigger, so none of them is a scheduled run.
+    3. The first log line, at 2026-10-12 23:05:00.257 UTC: `Timer run started. IsPastDue=False LastOccurrence=(null) NextOccurrence=2026-10-13T00:05:00+01:00 HostTimeZone=GMT Standard Time`.
+    4. The booking service's first line, at 23:05:00.264 UTC: `Booking run started. UtcNow=2026-10-12T23:05:00+00:00 LondonNow=2026-10-13T00:05:00+01:00 BookingDate=2026-10-20 BookingDateSupplied=False InSeason=True`.
+    5. Trigger time. The run is before 25 October 2026, so BST is in force and the first check in plan section 8.1 applies. The run's UTC timestamp is 23:05 on 2026-10-12, the day before the run day. That is 00:05 London time in BST, so the schedule runs in London time and `WEBSITE_TIME_ZONE` is in effect. `HostTimeZone` is `GMT Standard Time`, the value plan section 3.3 sets. The booking date, 2026-10-20, is London today plus 7 days, as spec section 6.1 requires.
+    6. `IsPastDue` is `False`, and there is no "The scheduled run started late" line. So the run started on time, and the late-run window was not needed. A cold start did not make this run late (T9 note 9, point 1).
+    7. Observation 1, expected behaviour. `NextOccurrence` shows the occurrence being run, 2026-10-13 00:05, not the following one. The Functions timer passes its schedule status as it was before this run, and updates it after the run. The `+01:00` offset still shows that the schedule is in London time.
+    8. Observation 2, expected behaviour. `LastOccurrence` is `(null)`, because this was the first scheduled run since deployment, so the schedule had no history yet. The timer logs a missing occurrence as empty (T15 note 7).
+    9. Plan sections 3, 3.3, 5.3 and 8.1, and T9's notes, say only that the timer logs the last and next occurrence. None of them says that `NextOccurrence` is the following occurrence, so no correction was needed.
+    10. Done when, item by item: the Function is deployed from `main` (note 1); the trigger time is checked as plan section 8.1 describes, before 25 October 2026, and the first scheduled run's UTC timestamp is 23:05 on the day before the run day (notes 3 and 5); the first scheduled run logs `IsPastDue`, and it was not late, so the late-run window did not apply (note 6). The item for a check from 25 October 2026 does not apply, because the check was made in BST.
+    11. Verify: Application Insights → Logs (KQL) after the first scheduled run (notes 3 and 4). No code, workflow or test changed. Standard test command on 2026-10-13: 180 and 34 passed, as after T22.
 
 ## Phase 6 — Verify in the season
 
@@ -504,7 +517,7 @@ Goal: the automation is proved in production and left running.
     5. Done when, item by item: the query returns the T19 run with every column filled (notes 1 and 2); the query is pinned to an Azure dashboard (note 3); the Invocations view is recorded as showing data (note 4).
     6. Verify: the dashboard tile shows the T19 run with no empty columns (note 3). No code or test changed. Standard test command on 2026-10-11: 180 and 34 passed, as after T19.
 
-- [ ] **T21 — Check one unattended scheduled run (manual)**
+- [x] **T21 — Check one unattended scheduled run (manual)**
   - Refs: spec 3 goals 1–3, spec 6.1, spec 6.5, plan 3, plan 5
   - Depends on: T19
   - Done when:
@@ -512,6 +525,16 @@ Goal: the automation is proved in production and left running.
     - The run's log shows `IsPastDue` was false, or that it was true and the late-run window allowed the run, so a normal wake-up is never recorded as `Missed`.
   - Verify: the plan section 5.4 query, the run's log lines, the inbox and the Picktime site
   - Notes:
+    Result, 2026-10-13. The run is the first scheduled run after deployment, on Tuesday 2026-10-13 at 00:05 London time (23:05 UTC on 2026-10-12). T18 records its timing. The owner ran a query in Application Insights → Logs and checked the inbox and the Picktime site. Claude sent no request to Picktime, the HTTP trigger or Azure: it recorded the result in the documents only. Booking ids are redacted here.
+    1. Start. `Timer run started. IsPastDue=False ...` (T18 note 3), then `Booking run started. ... BookingDate=2026-10-20 BookingDateSupplied=False InSeason=True` (T18 note 4). There is no "The scheduled run started late" line.
+    2. Availability, at 23:05:00.901 UTC: `Availability for target 2b on 2026-10-20. FreeHours=[17,18,19] FreeSlotCount=16`, and the same line for target 3a.
+    3. Bookings. Three lines, at 23:05:08.103, 23:05:14.195 and 23:05:21.039 UTC: `Booking request for <hour> on 2026-10-20 on target 2b returned Succeeded. BookingId=<id> BookingEmailConfirmation=True ApiMessage=Appointment fixed`, for 17:00, 18:00 and 19:00. About 6 seconds each, as in T14, T15 and T19.
+    4. Outcomes, at 23:05:21.042 UTC: hours 17:00, 18:00 and 19:00 each ended `Booked`, with `TargetName=2b` and `Reason=(null)`.
+    5. Summary, at 23:05:21.043 UTC: `Booking run finished. Date=2026-10-20 Booked=3 NoAvailability=0 Failed=0 Unconfirmed=0 FailedReads=0 Verdict=Success`. This is the event that the plan section 5.4 query reads, with the same values.
+    6. The owner's checks on 2026-10-13. Three Picktime confirmation emails, for 2026-10-20 at 17:00, 18:00 and 19:00, arrived in the early hours of 2026-10-13. The Picktime site shows all three slots on 2026-10-20 as taken.
+    7. They agree. The logs, the emails and the site all show booking date 2026-10-20, with three hours booked on 2b. The logs show three bookings with `BookingEmailConfirmation=True`, and three emails arrived. The logs show three `Booked` hours, and the site shows three slots taken. Target 2b had all three hours free, so the fallback target 3a was not needed. 2026-10-20 is not one of the dates booked by hand through the HTTP trigger (2026-10-13, 2026-10-15 and 2026-10-16), so this run did not double book (spec section 9).
+    8. Done when, item by item: after one scheduled run, the logs, the Picktime emails and the Picktime site all agree (notes 1 to 7); the run's log shows `IsPastDue` was false, so a normal wake-up was not recorded as `Missed` (note 1, and T18 note 6).
+    9. Verify: the run's log lines (notes 1 to 5), the inbox and the Picktime site (note 6). The owner confirmed on 2026-10-13 that the query they ran was almost the same as the plan section 5.4 query, and that the 5.4 query works for this run. The pinned dashboard tile (plan section 5.4) also shows the run: timestamp 2026-10-12T23:05:21, `BookingDate` 2026-10-20, `Booked` 3 and `Unavailable` 0, and the owner reports the verdict `Success`. No code, workflow or test changed. Standard test command on 2026-10-13: 180 and 34 passed, as after T22.
 
 - [x] **T22 — Rewrite the README**
   - Refs: spec 9
@@ -571,3 +594,5 @@ Goal: the automation is proved in production and left running.
 * 2026-10-10 — T19 — Book end to end in Azure — branch `task/t19-azure-booking`
 * 2026-10-11 — T20 — Pin the 90-day query — branch `task/t20-pin-query`
 * 2026-10-11 — T22 — Rewrite the README — branch `task/t22-readme`
+* 2026-10-13 — T18 — Deploy and check the schedule — branch `task/t18-t21-first-run`
+* 2026-10-13 — T21 — Check one unattended scheduled run — branch `task/t18-t21-first-run`
