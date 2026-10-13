@@ -25,10 +25,10 @@ No secret or personal detail stays in source. Local development uses `local.sett
 | --- | --- | --- |
 | `Picktime:BaseUrl` | `https://www.picktime.com/` | |
 | `Picktime:ScanToken` | *(secret)* | The `scantoken` header value |
-| `Picktime:AccountId` | `4fcc15b7-…` | |
-| `Picktime:LocationId` | `dd0a2b7e-…` | |
-| `Archer:FirstName` | `Oliver` | |
-| `Archer:LastName` | `Bourne` | |
+| `Picktime:AccountId` | `<your-account-id>` | |
+| `Picktime:LocationId` | `<your-location-id>` | |
+| `Archer:FirstName` | `Jane` | |
+| `Archer:LastName` | `Example` | |
 | `Archer:Email` | *(personal)* | |
 | `Booking:DaysAhead` | `7` | |
 | `Booking:Hours` | `[17, 18, 19]` | |
@@ -446,7 +446,7 @@ Adding a push or email alert later is a small change. An Azure Monitor alert on 
 | `scantoken` in git history | Low severity, and accepted. Spec section 5.3 shows it is anonymous and does not expire, so it grants nothing the public does not already have, and rotation would achieve nothing. |
 | `scantoken` going forward | Move to configuration, and to a Function App application setting in Azure. Not in source. |
 | Email address | Move to configuration. The repository is public, so it should not be a literal in source. |
-| Name and email in git history | Accepted on 2026-09-30, by the owner's choice. The archer's name and email were literals in committed code, so they stay in git history after they move to configuration. The name also appears as example values in section 2. Rewriting history was rejected: it is destructive, and GitHub keeps the old commits in merged pull requests anyway. |
+| Name and email in git history | Accepted on 2026-09-30, by the owner's choice. The archer's name and email were literals in committed code, so they stay in git history after they move to configuration. Rewriting history was rejected: it is destructive, and GitHub keeps the old commits in merged pull requests anyway. |
 | Name and email in logs | Accepted on 2026-10-06, by the owner's choice, as an exception to the owner's C# standard, which says not to log personal data. A malformed response body is logged at Warning level, cut to its first 1 KB (section 4.2), and a booking response can hold the archer's name and email. The raw text is what makes a malformed body possible to diagnose. The data is the owner's own, it is already public in git history (row above), and the logs stay in the owner's private Application Insights resource for up to 90 days (section 8.3). Only these two fields are accepted. The `scantoken` is never logged. |
 | `.gitignore` | Remove the self-ignoring line, then commit both ignore files. This matters because the token will live in `local.settings.json`. |
 | `local.settings.json` | Stays ignored. Never committed. |
