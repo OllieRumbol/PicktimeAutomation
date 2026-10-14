@@ -598,6 +598,10 @@ Goal: the automation is proved in production and left running.
        * Item 19, the full-run time in plan section 3.4: done. T21 measured about 21 seconds, from 23:05:00.26 to 23:05:21.04, against the plan's "about 20 seconds" (T14 note 7).
        * Item 20, code-review points marked "not done", each with a reason (T9a note 5, T10 note 6, T11 note 9, T15 notes 9 and 10): accepted when raised.
        * Item 22, the function key shown in a screenshot: done. Renewed on 2026-10-11 (note 4).
+    6. Review gaps from T15, fixed on 2026-10-14 with the owner's approval. A trial of a new task review on T15 (at `b3c8285`) found three gaps that were still present. No production code changed. Standard test command: 180 and 35 passed.
+       * No test checked the summary event's counts with non-zero values, so a swapped or constant count passed. `BookingLoggingExtensionsTests` now checks each count, and fails when two counts are swapped.
+       * Plan section 3 did not name `IPicktimeBookingService.DefaultBookingDate()` or `LondonClock.NowWithOffset()`, both added in T15. It now does.
+       * The scantoken test in `PicktimeApiRegistrationTests` hard-coded the token. It now reads it from `TestSettings`, so it always searches for the token that is sent.
 
 ---
 

@@ -117,7 +117,7 @@ Two changes of note against the current code:
 
 The booking service treats any other exception from one read the same way, as a failed read. The only exceptions are `PicktimeAuthenticationException`, which stops the run (section 4.2), and the caller's cancellation, which is never caught. An unexpected error leaves the free slots just as unknown, and spec section 6.4 requires that one target that cannot be read does not stop the others from being used. Every read is left to finish before a rejected token stops the run, so `FailedReads` is complete.
 
-`IPicktimeBookingService` keeps one entry point. The booking date is optional:
+`IPicktimeBookingService` keeps one entry point for a booking run. The booking date is optional:
 
 ```csharp
 Task<BookingSummary> BookArcheryIndoorTargetAsync(
@@ -126,6 +126,8 @@ Task<BookingSummary> BookArcheryIndoorTargetAsync(
 ```
 
 When no date is supplied, the service computes it from the injected `TimeProvider` and the configured `DaysAhead`. The timer trigger supplies nothing; the HTTP trigger supplies a date only when one was requested.
+
+The interface also has `DateOnly DefaultBookingDate()`, which returns the date a run with no date would book now. It books nothing. A `Missed` run logs that date (spec section 6.2), so the timer trigger reads it from the service and does not compute it.
 
 That placement is deliberate. If the trigger computed the date, the date rule — the thing most likely to be wrong, per spec section 6.2 — would live in an Azure Functions entry point, which is awkward to unit test. Keeping it inside the service means both triggers are thin adapters with no logic of their own, and the rule is covered by ordinary unit tests.
 
@@ -143,7 +145,7 @@ That placement is deliberate. If the trigger computed the date, the date rule �
 1. London time now is before 01:00, a constant, because spec section 6.1 sets it.
 2. The `BookingSchedule` expression has an occurrence on London today, at or before London time now. That makes London today a run day, which gives the worked examples in spec section 6.1, including the outage case.
 
-`LateRunWindow` gets the time from `LondonClock`, which gains a `Now()` method next to `Today()`, so it is testable with `FakeTimeProvider`. `AddPicktimeServices` registers it as a singleton.
+`LateRunWindow` gets the time from `LondonClock`, which gains a `Now()` method next to `Today()`, so it is testable with `FakeTimeProvider`. `AddPicktimeServices` registers it as a singleton. `LondonClock` also has `NowWithOffset()`, which returns London time now with its UTC offset, so a log line can show both the UTC and the London time that spec section 6.2 requires.
 
 The 01:00 cut-off assumes a run time just after midnight. If `BookingSchedule` moves the run time to 01:00 or later, every late run is `Missed`. That failure is safe, because it books nothing, and the warning shows it.
 
