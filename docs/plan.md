@@ -25,10 +25,10 @@ No secret or personal detail stays in source. Local development uses `local.sett
 | --- | --- | --- |
 | `Picktime:BaseUrl` | `https://www.picktime.com/` | |
 | `Picktime:ScanToken` | *(secret)* | The `scantoken` header value |
-| `Picktime:AccountId` | `4fcc15b7-…` | |
-| `Picktime:LocationId` | `dd0a2b7e-…` | |
-| `Archer:FirstName` | `Oliver` | |
-| `Archer:LastName` | `Bourne` | |
+| `Picktime:AccountId` | `<your-account-id>` | |
+| `Picktime:LocationId` | `<your-location-id>` | |
+| `Archer:FirstName` | `Jane` | |
+| `Archer:LastName` | `Example` | |
 | `Archer:Email` | *(personal)* | |
 | `Booking:DaysAhead` | `7` | |
 | `Booking:Hours` | `[17, 18, 19]` | |
@@ -117,7 +117,7 @@ Two changes of note against the current code:
 
 The booking service treats any other exception from one read the same way, as a failed read. The only exceptions are `PicktimeAuthenticationException`, which stops the run (section 4.2), and the caller's cancellation, which is never caught. An unexpected error leaves the free slots just as unknown, and spec section 6.4 requires that one target that cannot be read does not stop the others from being used. Every read is left to finish before a rejected token stops the run, so `FailedReads` is complete.
 
-`IPicktimeBookingService` keeps one entry point. The booking date is optional:
+`IPicktimeBookingService` keeps one entry point for a booking run. The booking date is optional:
 
 ```csharp
 Task<BookingSummary> BookArcheryIndoorTargetAsync(
@@ -126,6 +126,8 @@ Task<BookingSummary> BookArcheryIndoorTargetAsync(
 ```
 
 When no date is supplied, the service computes it from the injected `TimeProvider` and the configured `DaysAhead`. The timer trigger supplies nothing; the HTTP trigger supplies a date only when one was requested.
+
+The interface also has `DateOnly DefaultBookingDate()`, which returns the date a run with no date would book now. It books nothing. A `Missed` run logs that date (spec section 6.2), so the timer trigger reads it from the service and does not compute it.
 
 That placement is deliberate. If the trigger computed the date, the date rule — the thing most likely to be wrong, per spec section 6.2 — would live in an Azure Functions entry point, which is awkward to unit test. Keeping it inside the service means both triggers are thin adapters with no logic of their own, and the rule is covered by ordinary unit tests.
 
@@ -143,7 +145,7 @@ That placement is deliberate. If the trigger computed the date, the date rule �
 1. London time now is before 01:00, a constant, because spec section 6.1 sets it.
 2. The `BookingSchedule` expression has an occurrence on London today, at or before London time now. That makes London today a run day, which gives the worked examples in spec section 6.1, including the outage case.
 
-`LateRunWindow` gets the time from `LondonClock`, which gains a `Now()` method next to `Today()`, so it is testable with `FakeTimeProvider`. `AddPicktimeServices` registers it as a singleton.
+`LateRunWindow` gets the time from `LondonClock`, which gains a `Now()` method next to `Today()`, so it is testable with `FakeTimeProvider`. `AddPicktimeServices` registers it as a singleton. `LondonClock` also has `NowWithOffset()`, which returns London time now with its UTC offset, so a log line can show both the UTC and the London time that spec section 6.2 requires.
 
 The 01:00 cut-off assumes a run time just after midnight. If `BookingSchedule` moves the run time to 01:00 or later, every late run is `Missed`. That failure is safe, because it books nothing, and the warning shows it.
 
@@ -446,7 +448,7 @@ Adding a push or email alert later is a small change. An Azure Monitor alert on 
 | `scantoken` in git history | Low severity, and accepted. Spec section 5.3 shows it is anonymous and does not expire, so it grants nothing the public does not already have, and rotation would achieve nothing. |
 | `scantoken` going forward | Move to configuration, and to a Function App application setting in Azure. Not in source. |
 | Email address | Move to configuration. The repository is public, so it should not be a literal in source. |
-| Name and email in git history | Accepted on 2026-09-30, by the owner's choice. The archer's name and email were literals in committed code, so they stay in git history after they move to configuration. The name also appears as example values in section 2. Rewriting history was rejected: it is destructive, and GitHub keeps the old commits in merged pull requests anyway. |
+| Name and email in git history | Accepted on 2026-09-30, by the owner's choice. The archer's name and email were literals in committed code, so they stay in git history after they move to configuration. Rewriting history was rejected: it is destructive, and GitHub keeps the old commits in merged pull requests anyway. |
 | Name and email in logs | Accepted on 2026-10-06, by the owner's choice, as an exception to the owner's C# standard, which says not to log personal data. A malformed response body is logged at Warning level, cut to its first 1 KB (section 4.2), and a booking response can hold the archer's name and email. The raw text is what makes a malformed body possible to diagnose. The data is the owner's own, it is already public in git history (row above), and the logs stay in the owner's private Application Insights resource for up to 90 days (section 8.3). Only these two fields are accepted. The `scantoken` is never logged. |
 | `.gitignore` | Remove the self-ignoring line, then commit both ignore files. This matters because the token will live in `local.settings.json`. |
 | `local.settings.json` | Stays ignored. Never committed. |

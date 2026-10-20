@@ -2,7 +2,7 @@
 
 > **What this document is for:** It answers *what do we do next?* It splits the approved design into small, verifiable steps and tracks progress against them.
 
-Last updated: 2026-10-13
+Last updated: 2026-10-20
 
 <!--
 How to use this file
@@ -553,7 +553,7 @@ Goal: the automation is proved in production and left running.
     7. Done when, item by item: the README says what the project does, how to run it locally and which settings it needs (note 2); it states the operating rules in spec section 9 (notes 2 and 3).
     8. Verify: the README was followed from a fresh clone (notes 4 and 5). Standard test command on 2026-10-11: 180 and 34 passed, as after T20.
 
-- [ ] **T23 — Close out**
+- [x] **T23 — Close out**
   - Refs: spec 9
   - Depends on: T19–T22
   - Done when:
@@ -562,11 +562,67 @@ Goal: the automation is proved in production and left running.
   - Verify: go through spec section 9 item by item
   - Notes: `TODO.md` was deleted on 2026-10-01. It held only an unfilled template, so nothing was lost. Progress lives in this file.
 
+    Result, 2026-10-20, branch `task/t23-close-out`. Started on 2026-10-13 and finished on 2026-10-20, after the Thursday and Friday runs (note 7). Claude sent no request to Picktime, the HTTP trigger or Azure, and changed nothing in GitHub except this branch and its pull request. No production code, workflow or setting changed. Note 6 changed two test files and plan section 3, with the owner's approval.
+    1. Spec section 9, item by item:
+       * Scheduled runs on Tuesday, Thursday and Friday at 00:05 London book 17:00, 18:00 and 19:00 seven days ahead: proved for all three days. Tuesday: T18 notes 3 to 5, T21 notes 1 to 7, and the run on 2026-10-20 (note 7). Thursday and Friday: note 7. On Thursday 2026-10-15, 18:00 and 19:00 were taken on both targets, and the run recorded them as `NoAvailability`, as spec sections 6.4 and 6.5 require.
+       * 2b preferred, 3a per hour when 2b is taken: proved by tests in `BookingAlgorithmTests` (T8): test 1 (every hour free on 2b books all three on 2b), test 2 (one hour taken on 2b books that hour on 3a), test 4 (a free hour rejected on 2b books it on 3a) and test 9 (a failed read for 2b books on 3a). The real runs in T19, T21 and note 4 found 2b free for every hour, so 3a was not needed. The runs in note 7 do not record the target. The owner accepted the tests as the evidence on 2026-10-13, because a real fallback test needs unwanted bookings.
+       * Runs outside the season do nothing and say so: tests 7, 8 and 15 to 18 (T7), and the skipped-run log lines (T15 note 13, T22 note 5).
+       * No secret in the files, no personal detail in the source code: note 3.
+       * Never two bookings for the same hour, with three accepted exceptions: tests 12 to 14 (T11), T9a notes 2 and 5, the operating rules in the README (T22 notes 2 and 3), and no double booking for 2026-10-20 (T21 note 7). The catch-up in note 4 follows the rules.
+       * All tests pass: 180 and 35 passed on 2026-10-20 (note 8).
+       * Deployment is automated, and a failing test stops it: T17 notes 6, 12, 14 and 18.
+       * One real booking from Azure, on the site and by email: T19 notes 3, 5 and 9, and T21 note 6.
+       * No log line discarded except at the daily cap: T15 note 6, T16 note 3 and T20 note 1.
+       * Every run in the last 90 days in one place: the plan section 5.4 query in Logs (T20 note 1), with the default 90-day retention (T16 note 3). The tile shows 30 days (note 5, item 10).
+       * The logs show what a run did: T15 notes 13 and 14, T18 notes 3 and 4, T21 notes 1 to 5.
+       * The README: T22 notes 2, 4, 5 and 7.
+    2. The checkpoint on 2026-10-13 left T23 open, because no Thursday or Friday run had been seen. The owner decided to wait for the runs on Thursday 2026-10-15 and Friday 2026-10-16. Their evidence is in note 7.
+    3. Secrets check, by Claude on 2026-10-13, with `git grep` over all 79 tracked files. No value was printed. Searched for: a JWT-style token (`eyJ`); an email address; a GUID; connection string and key markers (`InstrumentationKey=`, `AccountKey=`, `DefaultEndpointsProtocol=`, `SharedAccessSignature`, `sig=`, `?code=`); a value after `x-functions-key`; a `scantoken`, password, secret or API key with a JSON value; long base64 or hex strings; long numbers; and a name, email domain or phone number in `*.cs`, `*.json`, `*.csproj`, `*.slnx` and `*.yml`. Found: no token, key or connection string; only placeholder and test values (an `example.com` address in the README, a fake connection string with a `.invalid` endpoint in a test, and Visual Studio project ids in the `.slnx` file); and no personal detail in the source code. Every 8-, 12- and 13-digit number is a timestamp. Not sensitive: the GitHub Actions run ids in T17 note 14, which are public, and the support request number in T16 note 6. One finding: plan section 2 showed the first 8 characters of the real account id and location id, and the archer's name, as example values. The owner approved on 2026-10-13 replacing them with the README's placeholders, and then deleting the sentence in plan section 6 that said the name appears in section 2. These are the only changes to `plan.md`. The name stays in `LICENSE`, as the copyright holder, and in git history (plan section 6).
+    4. Catch-up bookings and the function key. On Sunday 2026-10-11, the owner used the Azure manual trigger to book 2026-10-15 and 2026-10-16. Each run booked 17:00, 18:00 and 19:00 on 2b, with the verdict `Success`, and six confirmation emails arrived. The scheduled runs that book those dates were on 2026-10-08 and 2026-10-09 at 00:05, before the first deployment (T17 note 13). So no scheduled run books those dates, and spec section 9, exception 1, does not apply. The function key was visible in a screenshot during this, so the owner renewed the default function key the same day. The old key no longer works. The key is not recorded here.
+    5. Remaining items, decided by the owner on 2026-10-13. Kept, in "Remaining items" below: the budget end date (item 5), the Consumption plan check (item 6), the free grant check (item 7) and the first GMT run (item 21). Closed:
+       * Item 1, every push to `main` deploys, including docs-only changes: accepted (T17 note 17).
+       * Item 2, `azure/login` and `Azure/functions-action` use major tags, not commit SHAs, and Dependabot is not set up: accepted (T17 note 17).
+       * Item 3, the workflow does not refuse a deploy between 00:00 and 01:00: accepted. The README rule covers it (T22 note 3).
+       * Item 4, NU1900 stays a warning: accepted (T17 note 17).
+       * Item 8, the storage cost is an estimate (plan section 8.3): accepted. The £1 budget alert checks it.
+       * Item 9, GitHub's immutable OIDC subject: accepted. Plan section 8.4 records it as a possible improvement.
+       * Item 10, the tile shows 30 days and the query in Logs 90: accepted. Plan section 5.4 records it.
+       * Item 11, `BookingDate` shows a midnight time in the query results: accepted, cosmetic (T20 note 2).
+       * Item 12, `Reason=(null)` in the hour line, and the HTTP client logs at Information level: accepted (T15 note 15).
+       * Item 13, the Postman environment from T12 and T13 held the `scantoken`: done. The owner deleted it, or cleared the value.
+       * Item 14, no alert when the Log Analytics daily cap is reached: accepted. Only a runaway bug reaches the cap (plan section 8.3, spec section 9).
+       * Item 15, no alert when a run books nothing: accepted residual risk (plan section 5.5). An Azure Monitor alert would be a new feature.
+       * Item 16, a bad token can go unnoticed on a run where no hour is free: accepted (plan section 5.5).
+       * Item 17, a slot-taken rejection with someone else holding the slot has not been seen: accepted. A different response is `Unknown` and goes through the re-read, so it cannot double book (T13 note 4).
+       * Item 18, a future date with the wrong year passes the manual trigger: accepted. The spec rejects only past dates (T9 note 9, point 3).
+       * Item 19, the full-run time in plan section 3.4: done. T21 measured about 21 seconds, from 23:05:00.26 to 23:05:21.04, against the plan's "about 20 seconds" (T14 note 7).
+       * Item 20, code-review points marked "not done", each with a reason (T9a note 5, T10 note 6, T11 note 9, T15 notes 9 and 10): accepted when raised.
+       * Item 22, the function key shown in a screenshot: done. Renewed on 2026-10-11 (note 4).
+    6. Review gaps from T15, fixed on 2026-10-14 with the owner's approval. A trial of a new task review on T15 (at `b3c8285`) found three gaps that were still present. No production code changed. Standard test command: 180 and 35 passed.
+       * No test checked the summary event's counts with non-zero values, so a swapped or constant count passed. `BookingLoggingExtensionsTests` now checks each count, and fails when two counts are swapped.
+       * Plan section 3 did not name `IPicktimeBookingService.DefaultBookingDate()` or `LondonClock.NowWithOffset()`, both added in T15. It now does.
+       * The scantoken test in `PicktimeApiRegistrationTests` hard-coded the token. It now reads it from `TestSettings`, so it always searches for the token that is sent.
+    7. Scheduled runs after the checkpoint. The owner sent a screenshot of the pinned dashboard tile (plan section 5.4) on 2026-10-20. Each summary is at 23:05 UTC on the day before the run day, which is 00:05 London time in BST, and each booking date is that London date plus 7 days. Every summary is within 30 seconds of 23:05 UTC, so each run started at its run time.
+       * Thursday 2026-10-15: summary at 2026-10-14T23:05:09, `BookingDate` 2026-10-22, `Booked` 1, `Unavailable` 2, `Failed` 0, `Unconfirmed` 0, `FailedReads` 0, `Verdict` `Partial`. The club night has moved to Thursday, so 18:00 to 20:00 is booked out on both targets. Only 17:00 was booked. This is the correct result. While the club night stays on Thursday, expect `Partial` with `Unavailable` 2 on every Thursday run.
+       * Friday 2026-10-16: summary at 2026-10-15T23:05:20, `BookingDate` 2026-10-23, `Booked` 3, every other count 0, `Verdict` `Success`.
+       * Tuesday 2026-10-20: summary at 2026-10-19T23:05:26, `BookingDate` 2026-10-27, `Booked` 3, every other count 0, `Verdict` `Success`.
+       * The owner received the confirmation emails for every booking, and is satisfied with all of them. The same tile also shows the T19 run, the T21 run and the two catch-up runs in note 4 (2026-10-11 at 10:01:22 and 10:02:37 UTC, `BookingDate` 2026-10-15 and 2026-10-16, `Booked` 3, `Success`). The log lines with `IsPastDue` and the booking ids were not sent, and are not needed for spec section 9.
+    8. Done when, item by item: every item in spec section 9 is true (note 1, with notes 3, 4 and 7); the remaining items are recorded in "Remaining items" below, or closed with their reason (note 5). Verify: spec section 9 was checked item by item (note 1). Standard test command on 2026-10-20: 180 and 35 passed. T23 changes no production behaviour, so `/code-review` was not run.
+
 ---
 
 ## Blocked
 
 <!-- Tasks that cannot start, and what they wait for. Remove when unblocked. -->
+
+## Remaining items
+
+<!-- Work left after the last task, for the owner. Each item says what to do and when. Remove an item when it is done. T23 note 5 records the items that were closed. -->
+
+* **On 2026-10-27, the first run in GMT.** In Application Insights → Logs, check that the `Timer run started` line of the Tuesday 2026-10-27 run is at 00:05 UTC on 2026-10-27, not 23:05 the day before (plan section 8.1, T18).
+* **Before each season, first by 2027-10-01: the plan.** Check that the Consumption plan on Windows is still generally available, with no retirement date (plan section 8.1).
+* **Before each season, first by 2027-10-01: the free grant.** Check the Functions free grant figures on the Azure Functions pricing page, and update plan section 8.3 if they changed.
+* **Before 2030-12-30: the budget.** Extend the end date of `budget-picktime-monthly`, or the £1 alert stops (T16 note 9).
 
 ## Completed log
 
@@ -596,3 +652,4 @@ Goal: the automation is proved in production and left running.
 * 2026-10-11 — T22 — Rewrite the README — branch `task/t22-readme`
 * 2026-10-13 — T18 — Deploy and check the schedule — branch `task/t18-t21-first-run`
 * 2026-10-13 — T21 — Check one unattended scheduled run — branch `task/t18-t21-first-run`
+* 2026-10-20 — T23 — Close out — branch `task/t23-close-out`

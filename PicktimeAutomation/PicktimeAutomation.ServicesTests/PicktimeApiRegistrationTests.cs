@@ -231,7 +231,9 @@ public sealed class PicktimeApiRegistrationTests
     [TestMethod]
     public async Task BookingRun_MalformedBodiesAndRejectedToken_NeverLogTheScanToken()
     {
-        const string ScanToken = "fake-scan-token";
+        // Read from the settings the registration uses, so the test always searches for the token that is sent.
+        var scanToken = TestSettings.Valid()["Picktime:ScanToken"];
+        Assert.IsFalse(string.IsNullOrEmpty(scanToken), "The test settings must set a scantoken.");
         const string AllHoursFree = """{ "status": true, "message": "Success", "data": [202610131700, 202610131800, 202610131900] }""";
         var readIsMalformed = true;
         var bookingCount = 0;
@@ -270,7 +272,7 @@ public sealed class PicktimeApiRegistrationTests
             var loggedText = string.Join(
                 " ",
                 [record.Message, record.Exception?.ToString(), .. (record.StructuredState ?? []).Select(property => property.Value)]);
-            Assert.DoesNotContain(ScanToken, loggedText, $"Log record: {record.Message}");
+            Assert.DoesNotContain(scanToken, loggedText, $"Log record: {record.Message}");
         }
     }
 
